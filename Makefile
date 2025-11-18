@@ -66,3 +66,38 @@ clean:
 	rm -rf $(OBJ_DIR) $(TARGET)
 
 .PHONY: all clean compile_commands.json
+
+# Test system
+
+TEST_DIR    := tests
+TEST_BUILD  := $(OBJ_DIR)/tests
+
+TEST_SRCS_CPP := $(wildcard $(TEST_DIR)/*.cpp)
+TEST_SRCS_CU  := $(wildcard $(TEST_DIR)/*.cu)
+
+TEST_BINS_CPP := $(patsubst $(TEST_DIR)/%.cpp, $(TEST_BUILD)/%, $(TEST_SRCS_CPP))
+TEST_BINS_CU  := $(patsubst $(TEST_DIR)/%.cu,  $(TEST_BUILD)/%, $(TEST_SRCS_CU))
+
+TEST_BINS      := $(TEST_BINS_CPP) $(TEST_BINS_CU)
+
+# Create test build directory
+$(TEST_BUILD):
+	mkdir -p $(TEST_BUILD)
+
+$(TEST_BUILD)/%: $(TEST_DIR)/%.cpp $(CPP_OBJS) $(CU_OBJS) | $(TEST_BUILD)
+	$(NVCC) $(NVCCFLAGS) $(INCLUDES) $< $(CPP_OBJS) $(CU_OBJS) -o $@ $(LIB_PATHS) $(LIBS)
+
+# Compile and link CUDA test files with all project sources
+$(TEST_BUILD)/%: $(TEST_DIR)/%.cu $(CPP_OBJS) $(CU_OBJS) | $(TEST_BUILD)
+	$(NVCC) $(NVCCFLAGS) $(INCLUDES) $< $(CPP_OBJS) $(CU_OBJS) -o $@ $(LIB_PATHS) $(LIBS)
+
+# Run all tests
+test: $(TEST_BINS)
+	@echo "Running tests..."
+	@for t in $(TEST_BINS); do \
+		echo "===== $$t ====="; \
+		$$t || exit 1; \
+	done
+	@echo "All tests passed!"
+
+.PHONY: test
