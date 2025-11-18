@@ -20,8 +20,8 @@ using namespace std;
 
 // parameters
 // constexpr unsigned LIMB_BITS = 32;
-using limb_t = uint32_t; // each limb is stored in 32-bit containers
-// constexpr uint32_t BASE = (1ULL << LIMB_BITS); // base b = 2^w
+using limb_t = TestDataTypeUint; // each limb is stored in 32-bit containers
+// constexpr TestDataTypeUint BASE = (1ULL << LIMB_BITS); // base b = 2^w
 
 // host functions
 void host_multiply_merge(const vector<limb_t> &A, const vector<limb_t> &B, vector<limb_t> &C) {
@@ -34,7 +34,7 @@ void host_multiply_merge(const vector<limb_t> &A, const vector<limb_t> &B, vecto
     while (N < L_C)
         N <<= 1;
 
-    vector<uint32_t> A_pad(L_A, 0), B_pad(L_B, 0);
+    vector<TestDataTypeUint> A_pad(L_A, 0), B_pad(L_B, 0);
     copy(A.begin(), A.end(), A_pad.begin());
     copy(B.begin(), B.end(), B_pad.begin());
 
@@ -50,17 +50,17 @@ void host_multiply_merge(const vector<limb_t> &A, const vector<limb_t> &B, vecto
     cout << endl;
 
     // ntt_merge_forward should return 4 versions of the NTT. don't do the for loop
-    vector<vector<uint32_t>> A_mod(NUM_MODULI, vector<uint32_t>(N));
-    vector<vector<uint32_t>> B_mod(NUM_MODULI, vector<uint32_t>(N));
+    vector<vector<TestDataTypeUint>> A_mod(NUM_MODULI, vector<TestDataTypeUint>(N));
+    vector<vector<TestDataTypeUint>> B_mod(NUM_MODULI, vector<TestDataTypeUint>(N));
     ntt_merge_forward(A_pad, A_mod);
     ntt_merge_forward(B_pad, B_mod);
 
     // pointwise multiplication for each of the elements of A_mod, B_mod
-    vector<vector<uint32_t>> C_mod;
+    vector<vector<TestDataTypeUint>> C_mod;
     gpu_pointwise_multiply(A_mod, B_mod, C_mod);
 
     // gpu_ntt_inverse calls, should do the inverse ntt computation for all 4 C_mod vectors
-    vector<vector<uint32_t>> C_recovered;
+    vector<vector<TestDataTypeUint>> C_recovered;
     gpu_ntt_inverse(C_mod, C_recovered);
 
     // CRT recombination (CGBN)

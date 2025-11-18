@@ -1,6 +1,7 @@
 // main.cpp
 #include "include/gpu_ntt.h"
 #include "include/multiply.h"
+#include "include/config.h"
 #include <cstdint>
 #include <iostream>
 #include <vector>
@@ -17,9 +18,9 @@ int main(int argc, char* argv[]) {
 
     string option = argv[1];
 
-    vector<uint32_t> A = {1, 2, 3, 4};
-    vector<uint32_t> B = {5, 6, 7, 8};
-    vector<uint32_t> C;
+    vector<TestDataTypeUint> A = {1, 2, 3, 4};
+    vector<TestDataTypeUint> B = {5, 6, 7, 8};
+    vector<TestDataTypeUint> C;
 
     if (option == "merge") {
         cout << "[Host] Multiplying small polynomials using merge method...\n";
@@ -40,7 +41,7 @@ int main(int argc, char* argv[]) {
     } else if (option == "benchmark") {
         cout << "[Benchmark] Comparing merge vs 4step performance...\n";
 
-        vector<uint32_t> C_merge, C_4step;
+        vector<TestDataTypeUint> C_merge, C_4step;
 
         auto start_merge = chrono::high_resolution_clock::now();
         // host_multiply_merge(A, B, C_merge);

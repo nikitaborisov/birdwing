@@ -5,4 +5,6 @@
 #define NUM_MODULI 1
 #define BATCH 1
 
+typedef uint32_t TestDataTypeUint;
+
 #endif // CONFIG_H

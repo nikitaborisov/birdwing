@@ -10,20 +10,22 @@
 using namespace std;
 using namespace gpuntt;
 
-NTTFactors<Data32> factors[4] = {
-    {Modulus<Data32>(7681), 3383, 4298},
-    {Modulus<Data32>(7681), 3383, 4298},
-    {Modulus<Data32>(7681), 3383, 4298},
-    {Modulus<Data32>(7681), 3383, 4298}
+typedef Data32 TestDataType;
+
+NTTFactors<TestDataType> factors[4] = {
+    {Modulus<TestDataType>(7681), 3383, 4298},
+    {Modulus<TestDataType>(7681), 3383, 4298},
+    {Modulus<TestDataType>(7681), 3383, 4298},
+    {Modulus<TestDataType>(7681), 3383, 4298}
 };
 
-vector<uint32_t> moduli = {7681, 7681, 7681, 7681};
+vector<TestDataTypeUint> moduli = {7681, 7681, 7681, 7681};
 
-__host__ void ntt_merge_forward(vector<uint32_t> &a, vector<vector<uint32_t>> &a_mod) {
+__host__ void ntt_merge_forward(vector<TestDataTypeUint> &a, vector<vector<TestDataTypeUint>> &a_mod) {
     cout << "Entering host side ntt_merge_forward function" << endl;
 
     // need to convert to compatible data type
-    vector<Data32> a32(a.begin(), a.end());
+    vector<TestDataType> a32(a.begin(), a.end());
 
     size_t N = a.size();
     if (N == 0) return;
@@ -33,28 +35,28 @@ __host__ void ntt_merge_forward(vector<uint32_t> &a, vector<vector<uint32_t>> &a
         NTTParameters parameters(logN, factors[i], ReductionPolynomial::X_N_minus); // N is the length of the array you are sending in
 
         // CPU NTT
-        NTTCPU<Data32> generator(parameters);
-        vector<Data32> cpu_ntt_result = generator.ntt(a32);
+        NTTCPU<TestDataType> generator(parameters);
+        vector<TestDataType> cpu_ntt_result = generator.ntt(a32);
         cout << "[CPU] Forward NTT result: [ ";
         for (const auto& x : cpu_ntt_result)
             cout << x << " ";
         cout << "]" << endl;
 
-        vector<Data32> cpu_intt_result = generator.intt(cpu_ntt_result);
+        vector<TestDataType> cpu_intt_result = generator.intt(cpu_ntt_result);
         cout << "[CPU] Inverse NTT result: [ ";
         for (const auto& x : cpu_intt_result)
             cout << x << " ";
         cout << "]" << endl;
 
         // input copying to the device
-        Data32* InOut_Datas;
-        GPUNTT_CUDA_CHECK(cudaMalloc(&InOut_Datas, parameters.n * sizeof(Data32)));
-        GPUNTT_CUDA_CHECK(cudaMemcpy(InOut_Datas, a32.data(), parameters.n * sizeof(Data32), cudaMemcpyHostToDevice));
+        TestDataType* InOut_Datas;
+        GPUNTT_CUDA_CHECK(cudaMalloc(&InOut_Datas, parameters.n * sizeof(TestDataType)));
+        GPUNTT_CUDA_CHECK(cudaMemcpy(InOut_Datas, a32.data(), parameters.n * sizeof(TestDataType), cudaMemcpyHostToDevice));
 
         // Forward omega table allocation + generation + copying to device
-        Root<Data32>* Forward_Omega_Table_Device;
-        GPUNTT_CUDA_CHECK(cudaMalloc(&Forward_Omega_Table_Device, parameters.root_of_unity_size * sizeof(Root<Data32>)));
-        vector<Root<Data32>> forward_omega_table = parameters.gpu_root_of_unity_table_generator(parameters.forward_root_of_unity_table);
+        Root<TestDataType>* Forward_Omega_Table_Device;
+        GPUNTT_CUDA_CHECK(cudaMalloc(&Forward_Omega_Table_Device, parameters.root_of_unity_size * sizeof(Root<TestDataType>)));
+        vector<Root<TestDataType>> forward_omega_table = parameters.gpu_root_of_unity_table_generator(parameters.forward_root_of_unity_table);
 
         cout << "[GPU] Forward omega table values:" << endl;
         for (size_t j = 0; j < forward_omega_table.size(); j++) {
@@ -62,15 +64,15 @@ __host__ void ntt_merge_forward(vector<uint32_t> &a, vector<vector<uint32_t>> &a
         }
 
         GPUNTT_CUDA_CHECK(cudaMemcpy(Forward_Omega_Table_Device, forward_omega_table.data(),
-                parameters.root_of_unity_size * sizeof(Root<Data32>), cudaMemcpyHostToDevice));
+                parameters.root_of_unity_size * sizeof(Root<TestDataType>), cudaMemcpyHostToDevice));
 
         // GPU NTT inplace call
-        Modulus<Data32>* test_modulus;
-        GPUNTT_CUDA_CHECK(cudaMalloc(&test_modulus, sizeof(Modulus<Data32>)));
-        Modulus<Data32> test_modulus_[1] = {parameters.modulus};
-        GPUNTT_CUDA_CHECK(cudaMemcpy(test_modulus, test_modulus_, sizeof(Modulus<Data32>), cudaMemcpyHostToDevice));
+        Modulus<TestDataType>* test_modulus;
+        GPUNTT_CUDA_CHECK(cudaMalloc(&test_modulus, sizeof(Modulus<TestDataType>)));
+        Modulus<TestDataType> test_modulus_[1] = {parameters.modulus};
+        GPUNTT_CUDA_CHECK(cudaMemcpy(test_modulus, test_modulus_, sizeof(Modulus<TestDataType>), cudaMemcpyHostToDevice));
 
-        ntt_rns_configuration<Data32> cfg_ntt = {
+        ntt_rns_configuration<TestDataType> cfg_ntt = {
             .n_power = logN,
             .ntt_type = FORWARD,
             .ntt_layout = PerPolynomial,
@@ -82,10 +84,10 @@ __host__ void ntt_merge_forward(vector<uint32_t> &a, vector<vector<uint32_t>> &a
         GPU_NTT_Inplace(InOut_Datas, Forward_Omega_Table_Device, test_modulus, cfg_ntt, BATCH, 1);
 
         // copying output to host
-        Data32* Output_Host;
-        Output_Host = (Data32*) malloc(parameters.n * sizeof(Data32));
+        TestDataType* Output_Host;
+        Output_Host = (TestDataType*) malloc(parameters.n * sizeof(TestDataType));
         GPUNTT_CUDA_CHECK(cudaMemcpy(Output_Host, InOut_Datas,
-                    parameters.n * sizeof(Data32),
+                    parameters.n * sizeof(TestDataType),
                     cudaMemcpyDeviceToHost));
 
         cout << "[GPU] NTT output (device -> host): [ ";
@@ -114,13 +116,13 @@ __host__ void ntt_merge_forward(vector<uint32_t> &a, vector<vector<uint32_t>> &a
         }
 
         // copy Output_Host to a_mod[i]
-        if (a_mod.empty()) a_mod.push_back(vector<uint32_t>());
+        if (a_mod.empty()) a_mod.push_back(vector<TestDataTypeUint>());
         
         a_mod[i].clear();
-        a_mod[i].reserve(parameters.n * 2);  // each data32 has two uint32_ts? i'm not sure how the datatypes will work
+        a_mod[i].reserve(parameters.n * 2);  // each data32 has two TestDataTypeUints? i'm not sure how the datatypes will work
         
         for (size_t j = 0; j < parameters.n; j++) {
-            uint32_t low  = static_cast<uint32_t>(Output_Host[j] & 0xFFFFFFFF);
+            TestDataTypeUint low  = static_cast<TestDataTypeUint>(Output_Host[j] & 0xFFFFFFFF);
             a_mod[i].push_back(low);
         }
 
@@ -135,16 +137,16 @@ __host__ void ntt_merge_forward(vector<uint32_t> &a, vector<vector<uint32_t>> &a
     }
 }
 
-__global__ void pointwise_mul_kernel(uint32_t* A, uint32_t* B, uint32_t* C,
-                                     uint32_t modulus, size_t N) {
+__global__ void pointwise_mul_kernel(TestDataTypeUint* A, TestDataTypeUint* B, TestDataTypeUint* C,
+                                     TestDataTypeUint modulus, size_t N) {
     size_t idx = blockIdx.x * blockDim.x + threadIdx.x;
     if (idx < N) {
-        uint32_t prod = static_cast<uint32_t>(A[idx]) * B[idx];
-        C[idx] = static_cast<uint32_t>(prod % modulus);
+        TestDataTypeUint prod = static_cast<TestDataTypeUint>(A[idx]) * B[idx];
+        C[idx] = static_cast<TestDataTypeUint>(prod % modulus);
     }
 }
 
-__host__ void gpu_pointwise_multiply(const vector<vector<uint32_t>>& A_mod, const vector<vector<uint32_t>>& B_mod, vector<vector<uint32_t>>& C_mod) {
+__host__ void gpu_pointwise_multiply(const vector<vector<TestDataTypeUint>>& A_mod, const vector<vector<TestDataTypeUint>>& B_mod, vector<vector<TestDataTypeUint>>& C_mod) {
     size_t N = A_mod[0].size();
 
     cout << "[HOST] Starting GPU pointwise multiplication" << endl;
@@ -161,24 +163,24 @@ __host__ void gpu_pointwise_multiply(const vector<vector<uint32_t>>& A_mod, cons
         cout << "]" << endl;
     }
 
-    C_mod.resize(NUM_MODULI, vector<uint32_t>(N));
+    C_mod.resize(NUM_MODULI, vector<TestDataTypeUint>(N));
 
     for (size_t m = 0; m < NUM_MODULI; ++m) {
         cout << "[HOST] Processing modulus " << m << " (mod = " << moduli[m] << ")" << endl;
         // construct device arrays
-        const uint32_t* A_host = A_mod[m].data();
-        const uint32_t* B_host = B_mod[m].data();
+        const TestDataTypeUint* A_host = A_mod[m].data();
+        const TestDataTypeUint* B_host = B_mod[m].data();
 
-        uint32_t* C_host = C_mod[m].data();
-        uint32_t modulus = moduli[m];
+        TestDataTypeUint* C_host = C_mod[m].data();
+        TestDataTypeUint modulus = moduli[m];
 
-        uint32_t *A_dev, *B_dev, *C_dev;
-        GPUNTT_CUDA_CHECK(cudaMalloc(&A_dev, N * sizeof(uint32_t)));
-        GPUNTT_CUDA_CHECK(cudaMalloc(&B_dev, N * sizeof(uint32_t)));
-        GPUNTT_CUDA_CHECK(cudaMalloc(&C_dev, N * sizeof(uint32_t)));
+        TestDataTypeUint *A_dev, *B_dev, *C_dev;
+        GPUNTT_CUDA_CHECK(cudaMalloc(&A_dev, N * sizeof(TestDataTypeUint)));
+        GPUNTT_CUDA_CHECK(cudaMalloc(&B_dev, N * sizeof(TestDataTypeUint)));
+        GPUNTT_CUDA_CHECK(cudaMalloc(&C_dev, N * sizeof(TestDataTypeUint)));
 
-        GPUNTT_CUDA_CHECK(cudaMemcpy(A_dev, A_host, N * sizeof(uint32_t), cudaMemcpyHostToDevice));
-        GPUNTT_CUDA_CHECK(cudaMemcpy(B_dev, B_host, N * sizeof(uint32_t), cudaMemcpyHostToDevice));
+        GPUNTT_CUDA_CHECK(cudaMemcpy(A_dev, A_host, N * sizeof(TestDataTypeUint), cudaMemcpyHostToDevice));
+        GPUNTT_CUDA_CHECK(cudaMemcpy(B_dev, B_host, N * sizeof(TestDataTypeUint), cudaMemcpyHostToDevice));
 
         int threads = 256;
         int blocks = (N + threads - 1) / threads;
@@ -186,7 +188,7 @@ __host__ void gpu_pointwise_multiply(const vector<vector<uint32_t>>& A_mod, cons
         pointwise_mul_kernel<<<blocks, threads>>>(A_dev, B_dev, C_dev, modulus, N);
         GPUNTT_CUDA_CHECK(cudaDeviceSynchronize());
 
-        GPUNTT_CUDA_CHECK(cudaMemcpy(C_host, C_dev, N * sizeof(uint32_t), cudaMemcpyDeviceToHost));
+        GPUNTT_CUDA_CHECK(cudaMemcpy(C_host, C_dev, N * sizeof(TestDataTypeUint), cudaMemcpyDeviceToHost));
 
         cout << "[HOST] Result for modulus " << m << ": [ ";
         for (size_t i = 0; i < N; ++i)
@@ -199,7 +201,7 @@ __host__ void gpu_pointwise_multiply(const vector<vector<uint32_t>>& A_mod, cons
     }
 }
 
-__host__ void gpu_ntt_inverse(vector<vector<uint32_t>> &c_mod, vector<vector<uint32_t>> &c_recovered) {
+__host__ void gpu_ntt_inverse(vector<vector<TestDataTypeUint>> &c_mod, vector<vector<TestDataTypeUint>> &c_recovered) {
     cout << "Entering host side gpu_ntt_inverse function" << endl;
 
     for (int i = 0; i < NUM_MODULI; i ++ ) {
@@ -210,25 +212,25 @@ __host__ void gpu_ntt_inverse(vector<vector<uint32_t>> &c_mod, vector<vector<uin
         
         NTTParameters parameters(logN, factors[i], ReductionPolynomial::X_N_minus);
 
-        vector<Data32> c32(c_mod[i].begin(), c_mod[i].end());
+        vector<TestDataType> c32(c_mod[i].begin(), c_mod[i].end());
         
         // CPU INTT
-        NTTCPU<Data32> generator(parameters);
-        vector<Data32> cpu_intt_result = generator.intt(c32);
+        NTTCPU<TestDataType> generator(parameters);
+        vector<TestDataType> cpu_intt_result = generator.intt(c32);
         cout << "[CPU] Inverse NTT result: [ ";
         for (const auto& x : cpu_intt_result)
             cout << x << " ";
         cout << "]" << endl;
 
         // input copying to the device
-        Data32* InOut_Datas;
-        GPUNTT_CUDA_CHECK(cudaMalloc(&InOut_Datas, parameters.n * sizeof(Data32)));
-        GPUNTT_CUDA_CHECK(cudaMemcpy(InOut_Datas, c32.data(), parameters.n * sizeof(Data32), cudaMemcpyHostToDevice));
+        TestDataType* InOut_Datas;
+        GPUNTT_CUDA_CHECK(cudaMalloc(&InOut_Datas, parameters.n * sizeof(TestDataType)));
+        GPUNTT_CUDA_CHECK(cudaMemcpy(InOut_Datas, c32.data(), parameters.n * sizeof(TestDataType), cudaMemcpyHostToDevice));
 
         // Inverse omega table allocation + generation + copying to device
-        Root<Data32>* Inverse_Omega_Table_Device;
-        GPUNTT_CUDA_CHECK(cudaMalloc(&Inverse_Omega_Table_Device, parameters.root_of_unity_size * sizeof(Root<Data32>)));
-        vector<Root<Data32>> inverse_omega_table = parameters.gpu_root_of_unity_table_generator(parameters.inverse_root_of_unity_table);
+        Root<TestDataType>* Inverse_Omega_Table_Device;
+        GPUNTT_CUDA_CHECK(cudaMalloc(&Inverse_Omega_Table_Device, parameters.root_of_unity_size * sizeof(Root<TestDataType>)));
+        vector<Root<TestDataType>> inverse_omega_table = parameters.gpu_root_of_unity_table_generator(parameters.inverse_root_of_unity_table);
 
         cout << "[GPU] Inverse omega table values:" << endl;
         for (size_t j = 0; j < inverse_omega_table.size(); j++) {
@@ -236,21 +238,21 @@ __host__ void gpu_ntt_inverse(vector<vector<uint32_t>> &c_mod, vector<vector<uin
         }
 
         GPUNTT_CUDA_CHECK(cudaMemcpy(Inverse_Omega_Table_Device, inverse_omega_table.data(),
-            parameters.root_of_unity_size * sizeof(Root<Data32>), cudaMemcpyHostToDevice));
+            parameters.root_of_unity_size * sizeof(Root<TestDataType>), cudaMemcpyHostToDevice));
 
         // setting up modulus / mod_n_inverse to pass into ntt config
-        Modulus<Data32>* test_modulus;
-        GPUNTT_CUDA_CHECK(cudaMalloc(&test_modulus, sizeof(Modulus<Data32>)));
-        Modulus<Data32> test_modulus_[1] = {parameters.modulus};
-        GPUNTT_CUDA_CHECK(cudaMemcpy(test_modulus, test_modulus_, sizeof(Modulus<Data32>), cudaMemcpyHostToDevice));
+        Modulus<TestDataType>* test_modulus;
+        GPUNTT_CUDA_CHECK(cudaMalloc(&test_modulus, sizeof(Modulus<TestDataType>)));
+        Modulus<TestDataType> test_modulus_[1] = {parameters.modulus};
+        GPUNTT_CUDA_CHECK(cudaMemcpy(test_modulus, test_modulus_, sizeof(Modulus<TestDataType>), cudaMemcpyHostToDevice));
 
         // not sure what this does?
-        Ninverse<Data32>* test_ninverse;
-        GPUNTT_CUDA_CHECK(cudaMalloc(&test_ninverse, sizeof(Ninverse<Data32>)));
-        Ninverse<Data32> test_ninverse_[1] = {parameters.n_inv};
-        GPUNTT_CUDA_CHECK(cudaMemcpy(test_ninverse, test_ninverse_, sizeof(Ninverse<Data32>), cudaMemcpyHostToDevice));
+        Ninverse<TestDataType>* test_ninverse;
+        GPUNTT_CUDA_CHECK(cudaMalloc(&test_ninverse, sizeof(Ninverse<TestDataType>)));
+        Ninverse<TestDataType> test_ninverse_[1] = {parameters.n_inv};
+        GPUNTT_CUDA_CHECK(cudaMemcpy(test_ninverse, test_ninverse_, sizeof(Ninverse<TestDataType>), cudaMemcpyHostToDevice));
 
-        ntt_rns_configuration<Data32> cfg_intt = {
+        ntt_rns_configuration<TestDataType> cfg_intt = {
             .n_power = logN,
             .ntt_type = INVERSE,
             .ntt_layout = PerPolynomial,
@@ -260,16 +262,16 @@ __host__ void gpu_ntt_inverse(vector<vector<uint32_t>> &c_mod, vector<vector<uin
             .stream = 0};
 
         // output alloc + GPU INTT call
-        Data32* Out_Datas;
-        GPUNTT_CUDA_CHECK(cudaMalloc(&Out_Datas, parameters.n * sizeof(Data32)));
-        GPUNTT_CUDA_CHECK(cudaMemcpy(Out_Datas, c32.data(), parameters.n * sizeof(Data32), cudaMemcpyHostToDevice));
+        TestDataType* Out_Datas;
+        GPUNTT_CUDA_CHECK(cudaMalloc(&Out_Datas, parameters.n * sizeof(TestDataType)));
+        GPUNTT_CUDA_CHECK(cudaMemcpy(Out_Datas, c32.data(), parameters.n * sizeof(TestDataType), cudaMemcpyHostToDevice));
         GPU_INTT(InOut_Datas, Out_Datas, Inverse_Omega_Table_Device, test_modulus, cfg_intt, BATCH, 1);
 
         // copying output to host
-        Data32* Output_Host;
+        TestDataType* Output_Host;
 
-        Output_Host = (Data32*) malloc(parameters.n * sizeof(Data32));
-        GPUNTT_CUDA_CHECK(cudaMemcpy(Output_Host, Out_Datas, parameters.n * sizeof(Data32), cudaMemcpyDeviceToHost));
+        Output_Host = (TestDataType*) malloc(parameters.n * sizeof(TestDataType));
+        GPUNTT_CUDA_CHECK(cudaMemcpy(Output_Host, Out_Datas, parameters.n * sizeof(TestDataType), cudaMemcpyDeviceToHost));
 
         cout << "[GPU] INTT output (device -> host): [ ";
         for (long unsigned int j = 0; j < parameters.n; j++) {
@@ -297,13 +299,13 @@ __host__ void gpu_ntt_inverse(vector<vector<uint32_t>> &c_mod, vector<vector<uin
         }
 
         // copy Output_Host to c_recovered[i]
-        if (c_recovered.empty()) c_recovered.push_back(vector<uint32_t>());
+        if (c_recovered.empty()) c_recovered.push_back(vector<TestDataTypeUint>());
         
         c_recovered[i].clear();
-        c_recovered[i].reserve(parameters.n * 2);  // each data32 has two uint32_ts? i'm not sure how the datatypes will work
+        c_recovered[i].reserve(parameters.n * 2);  // each data32 has two TestDataTypeUints? i'm not sure how the datatypes will work
         
         for (size_t j = 0; j < parameters.n; j++) {
-            uint32_t low  = static_cast<uint32_t>(Output_Host[j] & 0xFFFFFFFF);
+            TestDataTypeUint low  = static_cast<TestDataTypeUint>(Output_Host[j] & 0xFFFFFFFF);
             c_recovered[i].push_back(low);
         }
 
