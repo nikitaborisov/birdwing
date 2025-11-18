@@ -10,7 +10,7 @@
 using namespace std;
 using namespace gpuntt;
 
-typedef Data32 TestDataType;
+typedef Data64 TestDataType;
 
 NTTFactors<TestDataType> factors[4] = {
     {Modulus<TestDataType>(7681), 3383, 4298},
@@ -137,12 +137,47 @@ __host__ void ntt_merge_forward(vector<TestDataTypeUint> &a, vector<vector<TestD
     }
 }
 
-__global__ void pointwise_mul_kernel(TestDataTypeUint* A, TestDataTypeUint* B, TestDataTypeUint* C,
-                                     TestDataTypeUint modulus, size_t N) {
+template <typename T>
+__device__ __forceinline__ void mul_wide(T a, T b, T &lo, T &hi)
+{
+    if constexpr (sizeof(T) == 4)
+    {
+        // 32-bit multiply -> 64-bit product
+        uint64_t prod = (uint64_t)a * (uint64_t)b;
+        lo = (T)prod;            // low 32 bits
+        hi = (T)(prod >> 32);    // high 32 bits
+    }
+    else if constexpr (sizeof(T) == 8)
+    {
+        // 64-bit multiply -> 128-bit product
+        lo = a * b;             // low 64 bits
+        hi = __umul64hi(a, b);  // high 64 bits
+    }
+    else {
+        static_assert(sizeof(T) == 4 || sizeof(T) == 8,
+                      "Unsupported TestDataTypeUint size.");
+    }
+}
+
+__global__ void pointwise_mul_kernel(TestDataTypeUint* A,
+                                     TestDataTypeUint* B,
+                                     TestDataTypeUint* C,
+                                     TestDataTypeUint modulus,
+                                     size_t N)
+{
     size_t idx = blockIdx.x * blockDim.x + threadIdx.x;
     if (idx < N) {
-        TestDataTypeUint prod = static_cast<TestDataTypeUint>(A[idx]) * B[idx];
-        C[idx] = static_cast<TestDataTypeUint>(prod % modulus);
+        TestDataTypeUint lo, hi;
+        mul_wide(A[idx], B[idx], lo, hi);
+
+        if constexpr (sizeof(TestDataTypeUint) == 4) {
+            uint64_t full = ((uint64_t)hi << 32) | lo;
+            C[idx] = (TestDataTypeUint)(full % modulus);
+        } else {
+            unsigned __int128 full =
+                ((unsigned __int128)hi << 64) | lo;
+            C[idx] = (TestDataTypeUint)(full % modulus);
+        }
     }
 }
 

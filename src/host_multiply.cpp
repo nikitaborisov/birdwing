@@ -34,7 +34,7 @@ void host_multiply_merge(const vector<limb_t> &A, const vector<limb_t> &B, vecto
     while (N < L_C)
         N <<= 1;
 
-    vector<TestDataTypeUint> A_pad(L_A, 0), B_pad(L_B, 0);
+    vector<TestDataTypeUint> A_pad(N, 0), B_pad(N, 0);
     copy(A.begin(), A.end(), A_pad.begin());
     copy(B.begin(), B.end(), B_pad.begin());
 

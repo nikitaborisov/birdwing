@@ -2,9 +2,10 @@
 #include <cstdint>
 #include <vector>
 #include <iostream>
+#include "config.h"
 
 using namespace std;
 
-void ntt_merge_forward(vector<uint32_t> &a, vector<vector<uint32_t>> &a_mod);
-void gpu_pointwise_multiply(const vector<vector<uint32_t>>& A_mod, const vector<vector<uint32_t>>& B_mod, vector<vector<uint32_t>>& C_mod);
-void gpu_ntt_inverse(vector<vector<uint32_t>> &c_mod, vector<vector<uint32_t>> &c_recovered);
+void ntt_merge_forward(vector<TestDataTypeUint> &a, vector<vector<TestDataTypeUint>> &a_mod);
+void gpu_pointwise_multiply(const vector<vector<TestDataTypeUint>>& A_mod, const vector<vector<TestDataTypeUint>>& B_mod, vector<vector<TestDataTypeUint>>& C_mod);
+void gpu_ntt_inverse(vector<vector<TestDataTypeUint>> &c_mod, vector<vector<TestDataTypeUint>> &c_recovered);
