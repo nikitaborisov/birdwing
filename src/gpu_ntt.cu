@@ -14,12 +14,10 @@ typedef Data64 TestDataType;
 
 NTTFactors<TestDataType> factors[4] = {
     {Modulus<TestDataType>(7681), 3383, 4298},
-    {Modulus<TestDataType>(7681), 3383, 4298},
-    {Modulus<TestDataType>(7681), 3383, 4298},
     {Modulus<TestDataType>(7681), 3383, 4298}
 };
 
-vector<TestDataTypeUint> moduli = {7681, 7681, 7681, 7681};
+vector<TestDataTypeUint> moduli = {7681, 7681};
 
 __host__ void ntt_merge_forward(vector<TestDataTypeUint> &a, vector<vector<TestDataTypeUint>> &a_mod) {
     cout << "Entering host side ntt_merge_forward function" << endl;

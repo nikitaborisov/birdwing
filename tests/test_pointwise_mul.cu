@@ -9,7 +9,7 @@
 
 using namespace std;
 
-vector<TestDataTypeUint> testmoduli = {7681, 7681, 7681, 7681};
+vector<TestDataTypeUint> testmoduli = {7681, 7681};
 
 TestDataTypeUint cpu_modmul(TestDataTypeUint a, TestDataTypeUint b, TestDataTypeUint modulus) {
     if constexpr (sizeof(TestDataTypeUint) == 4) {
