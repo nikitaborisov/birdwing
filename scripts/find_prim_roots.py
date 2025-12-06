@@ -67,6 +67,8 @@ m = 3 * 5**2
 max_order = 43
 odd_part_factors = [3, 5]
 
+print("Starting computation for p =", p)
+
 g, root = find_2power_root(p, m, max_order, odd_part_factors)
 
 print("Primitive root:", g)
@@ -87,6 +89,8 @@ p = 2**44 * 3**2 * 7 + 1
 m = 3**2 * 7
 max_order = 44
 odd_part_factors = [3, 7]
+
+print("Starting computation for p =", p)
 
 g, root = find_2power_root(p, m, max_order, odd_part_factors)
 
