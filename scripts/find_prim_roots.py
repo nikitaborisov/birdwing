@@ -10,7 +10,7 @@ two_power = 2**43
 
 def is_primitive_root(g, p):
     # Check if g is a primitive root modulo p
-    factors = [2, 3, 7]  # prime factors of p-1
+    factors = [2, 3, 5]  # prime factors of p-1
     for factor in factors:
         if pow(g, (p-1)//factor, p) == 1:
             return False
