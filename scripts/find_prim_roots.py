@@ -50,6 +50,18 @@ def find_primitive_root(max_root_of_unity, max_order, k, p):
     
     return omega
 
+def find_2nth_root_given_omega(max_root_of_unity, max_order, k, p):
+    """
+    Given the max root of unity (defined above) and a new k < max_order, find the primitive 2*2^kth root of unity
+    """
+    assert k + 1 <= max_order
+    
+    psi = pow(max_root_of_unity, 2 ** (max_order - (k + 1)), p)
+    assert pow(psi, 2**(k+1), p) == 1, "Wrong order!"
+    assert pow(psi, 2**k, p) != 1, "Order is too small!"
+    
+    return psi
+
 p = 2**43 * 3 * 5**2 + 1
 m = 3 * 5**2
 max_order = 43
@@ -60,10 +72,16 @@ g, root = find_2power_root(p, m, max_order, odd_part_factors)
 print("Primitive root:", g)
 print("2^k-th root of unity:", root)
 
+# length of NTT transform = 2^26
 k = 26
 omega = find_primitive_root(root, max_order, k, p)
-
 print(f"Primitive 2^{k}-th root of unity:", omega)
+
+psi = find_2nth_root_given_omega(root, max_order, k, p)
+print(f"Primitive 2^{k+1}-th root of unity:", psi)
+
+# make sure psi^2 = omega
+assert pow(psi, 2, p) == omega, "psi^2 != omega"
 
 p = 2**44 * 3**2 * 7 + 1
 m = 3**2 * 7
@@ -77,5 +95,10 @@ print("2^k-th root of unity:", root)
 
 k = 26
 omega = find_primitive_root(root, max_order, k, p)
-
 print(f"Primitive 2^{k}-th root of unity:", omega)
+
+psi = find_2nth_root_given_omega(root, max_order, k, p)
+print(f"Primitive 2^{k+1}-th root of unity:", psi)
+
+# make sure psi^2 = omega
+assert pow(psi, 2, p) == omega, "psi^2 != omega"
