@@ -334,6 +334,7 @@ __host__ void gpu_ntt_inverse(vector<vector<TestDataTypeUint>> &c_mod, vector<ve
         // copy Output_Host to c_recovered[i]
         if (c_recovered.empty()) c_recovered.push_back(vector<TestDataTypeUint>());
         
+        c_recovered.resize(NUM_MODULI);
         c_recovered[i].clear();
         c_recovered[i].reserve(parameters.n * 2);  // each data32 has two TestDataTypeUints? i'm not sure how the datatypes will work
         
