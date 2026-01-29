@@ -8,4 +8,6 @@
 typedef uint64_t TestDataTypeUint;
 typedef __uint128_t TestDataTypeUint128;
 
+extern std::vector<TestDataTypeUint> moduli;
+
 #endif // CONFIG_H

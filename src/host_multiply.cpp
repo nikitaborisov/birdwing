@@ -12,6 +12,8 @@
 #include "../include/gpu_cgbn.h"
 #include "../include/gpu_ntt.h"
 #include "../include/multiply.h"
+#include "../include/crt.h"
+#include "../include/crt_utils.h"
 #include "config.h"
 
 #include <algorithm>
@@ -66,10 +68,31 @@ void host_multiply_merge(const vector<limb_t> &A, const vector<limb_t> &B, vecto
     // CRT recombination (CGBN)
     // vector<__uint128_t> C_big(N);
     // gpu_crt_reconstruct(C_mod, C_big, MODULI, NUM_MODULI);
+    vector<__uint128_t> C_big(N, 0);
+
+    for (size_t i = 0; i < N; ++i) {
+        vector<uint64_t> residues(NUM_MODULI);
+        for (size_t j = 0; j < NUM_MODULI; ++j)
+            residues[j] = C_mod[j][i];
+
+        C_big[i] = crt_combine_many(moduli, residues); // reconstruct coefficient i
+    }
 
     // Carry propagation (CGBN)
     // C.resize(L_C + 1);
     // gpu_carry_propagate(C_big, C, BASE);
+
+    C.resize(L_C + 1, 0);  // result limbs
+    uint64_t carry = 0;
+    for (size_t i = 0; i < N; ++i) {
+        unsigned __int128 temp = C_big[i] + carry;
+        C[i] = static_cast<limb_t>(temp & 0xFFFFFFFF); // store 32-bit limb
+        carry = static_cast<uint64_t>(temp >> 32);
+    }
+
+    // handle remaining carry
+    if (carry)
+        C[L_C] = carry;
 
     // trim
     while (C.size() > 1 && C.back() == 0)
