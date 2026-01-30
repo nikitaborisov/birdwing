@@ -8,23 +8,23 @@ using namespace std;
 
 // struct holding parameters for CRT with 2 primes
 struct CRT2Params {
-    uint64_t p1;
-    uint64_t p2;
-    uint64_t p1_inv_mod_p2;
+    TestDataTypeUint p1;
+    TestDataTypeUint p2;
+    TestDataTypeUint p1_inv_mod_p2;
     unsigned __int128 modulus;
 
-    CRT2Params(uint64_t _p1, uint64_t _p2);
+    CRT2Params(TestDataTypeUint _p1, TestDataTypeUint _p2);
 };
 
 // combine residues modulo two primes
 unsigned __int128 crt_combine_2(
     const CRT2Params &params,
-    uint64_t a_mod_p1,
-    uint64_t b_mod_p2
+    TestDataTypeUint a_mod_p1,
+    TestDataTypeUint b_mod_p2
 );
 
 // general CRT for many primes
 unsigned __int128 crt_combine_many(
-    const vector<uint64_t> &primes,
-    const vector<uint64_t> &residues
+    const vector<TestDataTypeUint> &primes,
+    const vector<TestDataTypeUint> &residues
 );

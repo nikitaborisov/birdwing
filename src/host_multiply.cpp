@@ -61,9 +61,27 @@ void host_multiply_merge(const vector<limb_t> &A, const vector<limb_t> &B, vecto
     vector<vector<TestDataTypeUint>> C_mod;
     gpu_pointwise_multiply(A_mod, B_mod, C_mod);
 
+    // print pointwise multiplication results
+    for (size_t j = 0; j < NUM_MODULI; ++j) {
+        cout << "[Host] Pointwise multiplication mod " << moduli[j] << ": ";
+        for (size_t i = 0; i < N; ++i) {
+            cout << C_mod[j][i] << " ";
+        }
+        cout << endl;
+    }
+
     // gpu_ntt_inverse calls, should do the inverse ntt computation for all 4 C_mod vectors
     vector<vector<TestDataTypeUint>> C_recovered;
     gpu_ntt_inverse(C_mod, C_recovered);
+
+    // print recovered C_mod results
+    for (size_t j = 0; j < NUM_MODULI; ++j) {
+        cout << "[Host] Inverse NTT result mod " << moduli[j] << ": ";
+        for (size_t i = 0; i < N; ++i) {
+            cout << C_recovered[j][i] << " ";
+        }
+        cout << endl;
+    }
 
     // CRT recombination (CGBN)
     // vector<__uint128_t> C_big(N);
@@ -71,11 +89,22 @@ void host_multiply_merge(const vector<limb_t> &A, const vector<limb_t> &B, vecto
     vector<__uint128_t> C_big(N, 0);
 
     for (size_t i = 0; i < N; ++i) {
-        vector<uint64_t> residues(NUM_MODULI);
+        vector<TestDataTypeUint> residues(NUM_MODULI);
         for (size_t j = 0; j < NUM_MODULI; ++j)
-            residues[j] = C_mod[j][i];
+            residues[j] = C_recovered[j][i];
 
+        // print the residues for coefficient i
+        cout << "[Host] Coefficient " << i << " residues: ";
+        for (auto x : residues)
+            cout << x << " ";
+        cout << endl;
         C_big[i] = crt_combine_many(moduli, residues); // reconstruct coefficient i
+        __uint128_t M = 1;
+        for (size_t j = 0; j < NUM_MODULI; ++j)
+            M *= moduli[j];
+
+        if (C_big[i] > M/2)
+            C_big[i] -= M;   // now signed
     }
 
     // Carry propagation (CGBN)
@@ -84,7 +113,7 @@ void host_multiply_merge(const vector<limb_t> &A, const vector<limb_t> &B, vecto
 
     C.resize(L_C + 1, 0);  // result limbs
     uint64_t carry = 0;
-    for (size_t i = 0; i < N; ++i) {
+    for (size_t i = 0; i < L_C; ++i) {
         unsigned __int128 temp = C_big[i] + carry;
         C[i] = static_cast<limb_t>(temp & 0xFFFFFFFF); // store 32-bit limb
         carry = static_cast<uint64_t>(temp >> 32);

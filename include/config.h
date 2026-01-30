@@ -2,10 +2,12 @@
 #ifndef CONFIG_H
 #define CONFIG_H
 
-#define NUM_MODULI 2
+#define NUM_MODULI 3
 #define BATCH 1
 
-typedef uint64_t TestDataTypeUint;
+#include <vector>
+
+typedef uint32_t TestDataTypeUint;
 typedef __uint128_t TestDataTypeUint128;
 
 extern std::vector<TestDataTypeUint> moduli;

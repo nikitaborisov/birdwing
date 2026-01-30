@@ -7,9 +7,13 @@
 #include "config.h"
 #include "gpu_ntt.h"
 
+#define GREEN_BOLD "\033[1;32m"
+#define RED_BOLD   "\033[1;31m"
+#define RESET      "\033[0m"
+
 using namespace std;
 
-vector<TestDataTypeUint> testmoduli = {7681, 7681};
+vector<TestDataTypeUint> testmoduli = {2013265921, 1811939329, 469762049};
 
 TestDataTypeUint cpu_modmul(TestDataTypeUint a, TestDataTypeUint b, TestDataTypeUint modulus) {
     if constexpr (sizeof(TestDataTypeUint) == 4) {
@@ -70,8 +74,10 @@ void test_pointwise_multiply() {
         }
     }
 
-    if (ok) cout << "[TEST PASS] All GPU results match CPU reference.\n";
-    else     cout << "[TEST FAIL] Mismatches detected.\n";
+    if (ok)
+        cout << GREEN_BOLD << "[TEST PASS] All GPU results match CPU reference." << RESET << "\n";
+    else
+        cout << RED_BOLD << "[TEST FAIL] Mismatches detected." << RESET << "\n";
 }
 
 int main() {
