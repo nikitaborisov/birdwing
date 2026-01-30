@@ -106,3 +106,69 @@ print(f"Primitive 2^{k+1}-th root of unity:", psi)
 
 # make sure psi^2 = omega
 assert pow(psi, 2, p) == omega, "psi^2 != omega"
+
+p = 2**27 * 3 * 5 + 1
+m = 3 * 5
+max_order = 27
+odd_part_factors = [3, 5]
+
+print("Starting computation for p =", p)
+
+g, root = find_2power_root(p, m, max_order, odd_part_factors)
+
+print("Primitive root:", g)
+print("2^k-th root of unity:", root)
+
+k = 3
+omega = find_primitive_root(root, max_order, k, p)
+print(f"Primitive 2^{k}-th root of unity:", omega)
+
+psi = find_2nth_root_given_omega(root, max_order, k, p)
+print(f"Primitive 2^{k+1}-th root of unity:", psi)
+
+# make sure psi^2 = omega
+assert pow(psi, 2, p) == omega, "psi^2 != omega"
+
+p = 2**26 * 3**3 + 1
+m = 3**3
+max_order = 26
+odd_part_factors = [3]
+
+print("Starting computation for p =", p)
+
+g, root = find_2power_root(p, m, max_order, odd_part_factors)
+
+print("Primitive root:", g)
+print("2^k-th root of unity:", root)
+
+k = 3
+omega = find_primitive_root(root, max_order, k, p)
+print(f"Primitive 2^{k}-th root of unity:", omega)
+
+psi = find_2nth_root_given_omega(root, max_order, k, p)
+print(f"Primitive 2^{k+1}-th root of unity:", psi)
+
+# make sure psi^2 = omega
+assert pow(psi, 2, p) == omega, "psi^2 != omega"
+
+p = 2**26 * 7 + 1
+m = 7
+max_order = 26
+odd_part_factors = [7]
+
+print("Starting computation for p =", p)
+
+g, root = find_2power_root(p, m, max_order, odd_part_factors)
+
+print("Primitive root:", g)
+print("2^k-th root of unity:", root)
+
+k = 3
+omega = find_primitive_root(root, max_order, k, p)
+print(f"Primitive 2^{k}-th root of unity:", omega)
+
+psi = find_2nth_root_given_omega(root, max_order, k, p)
+print(f"Primitive 2^{k+1}-th root of unity:", psi)
+
+# make sure psi^2 = omega
+assert pow(psi, 2, p) == omega, "psi^2 != omega"
