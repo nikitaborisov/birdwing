@@ -13,7 +13,7 @@
 
 using namespace std;
 
-vector<TestDataTypeUint> testmoduli = {2013265921, 1811939329, 469762049};
+vector<TestDataTypeUint> testmoduli = {754974721, 595591169, 645922817};
 
 TestDataTypeUint cpu_modmul(TestDataTypeUint a, TestDataTypeUint b, TestDataTypeUint modulus) {
     if constexpr (sizeof(TestDataTypeUint) == 4) {

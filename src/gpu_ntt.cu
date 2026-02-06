@@ -13,13 +13,13 @@ using namespace gpuntt;
 typedef Data32 TestDataType;
 
 NTTFactors<TestDataType> factors[4] = {
-    {Modulus<TestDataType>(2013265921), 1592366214, 196396260},
-    {Modulus<TestDataType>(1811939329), 1452317833, 659408637},
-    {Modulus<TestDataType>(469762049), 129701348, 426037461}
+    {Modulus<TestDataType>(754974721), 205430076, 49823357},
+    {Modulus<TestDataType>(595591169), 68081344, 443510249},
+    {Modulus<TestDataType>(645922817), 146614077, 280465537}
     // {Modulus<TestDataType>(10753), 4305, 4894}
 };
 
-vector<TestDataTypeUint> moduli = {2013265921, 1811939329, 469762049};
+vector<TestDataTypeUint> moduli = {754974721, 595591169, 645922817};
 
 __host__ void ntt_merge_forward(vector<TestDataTypeUint> &a, vector<vector<TestDataTypeUint>> &a_mod) {
     cout << "Entering host side ntt_merge_forward function" << endl;
