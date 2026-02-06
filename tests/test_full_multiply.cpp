@@ -3,6 +3,8 @@
 #include <random>
 #include <cassert>
 #include <limits>
+#include <chrono>
+#include <gmp.h>
 
 #include "../include/multiply.h"
 #include "../include/config.h"
@@ -60,7 +62,7 @@ vector<TestDataTypeUint> random_limbs(size_t n, uint64_t seed)
         if (i % 8 == 0) v[i] = 0; // edge case
         else if (i % 8 == 1) v[i] = 1;
         // else if (i % 8 == 2) v[i] = numeric_limits<TestDataTypeUint>::max();
-        else v[i] = (TestDataTypeUint)rng() % (1ULL << 2);
+        else v[i] = (TestDataTypeUint)rng() % (1ULL << 31);
     }
     return v;
 }
@@ -87,7 +89,60 @@ bool compare_vectors(const vector<TestDataTypeUint>& A,
     return ok;
 }
 
-// ---------------- FULL PIPELINE TEST ----------------
+// ---------------- GMP HELPERS ----------------
+void to_mpz(mpz_t out, const vector<TestDataTypeUint>& v)
+{
+    mpz_set_ui(out, 0);
+    const size_t limb_bits = 8 * sizeof(TestDataTypeUint);
+
+    for (ssize_t i = (ssize_t)v.size() - 1; i >= 0; i--) {
+        mpz_mul_2exp(out, out, limb_bits);
+        mpz_add_ui(out, out, v[i]);
+    }
+}
+
+vector<TestDataTypeUint> from_mpz(const mpz_t x, size_t expected_limbs)
+{
+    vector<TestDataTypeUint> out(expected_limbs, 0);
+
+    mpz_t tmp;
+    mpz_init_set(tmp, x);
+
+    const unsigned limb_bits = 8 * sizeof(TestDataTypeUint);
+
+    for (size_t i = 0; i < expected_limbs; i++) {
+        out[i] = (TestDataTypeUint) mpz_get_ui(tmp);
+        mpz_fdiv_q_2exp(tmp, tmp, limb_bits);
+    }
+
+    mpz_clear(tmp);
+    return out;
+}
+
+vector<TestDataTypeUint> gmp_mul(
+    const vector<TestDataTypeUint>& A,
+    const vector<TestDataTypeUint>& B)
+{
+    mpz_t a, b, c;
+    mpz_init(a);
+    mpz_init(b);
+    mpz_init(c);
+
+    to_mpz(a, A);
+    to_mpz(b, B);
+
+    mpz_mul(c, a, b);
+
+    auto out = from_mpz(c, A.size() + B.size());
+
+    mpz_clear(a);
+    mpz_clear(b);
+    mpz_clear(c);
+
+    return out;
+}
+
+// ---------------- PIPELINE TEST ----------------
 void test_full_pipeline(size_t L)
 {
     cout << YELLOW << "\n[Test] Full multiply pipeline, L = "
@@ -129,22 +184,60 @@ void test_full_pipeline(size_t L)
         cout << RED_BOLD << "[FAIL] Pipeline incorrect\n" << RESET;
 }
 
-// ---------------- MAIN TEST DRIVER ----------------
+// ---------------- BENCHMARK ----------------
+void benchmark_vs_gmp(size_t L)
+{
+    cout << YELLOW << "\n[Benchmark] L = " << L << RESET << "\n";
+
+    vector<TestDataTypeUint> A = random_limbs(L, 1234);
+    vector<TestDataTypeUint> B = random_limbs(L, 5678);
+
+    vector<TestDataTypeUint> C_gpu, C_gmp;
+
+    // Warm-up
+    vector<TestDataTypeUint> warm;
+    host_multiply_merge(A, B, warm);
+    C_gmp = gmp_mul(A, B);
+
+    const int ITERS = 5;
+    double gpu_time = 0.0, gmp_time = 0.0;
+
+    for (int i = 0; i < ITERS; i++) {
+        auto t1 = chrono::high_resolution_clock::now();
+        host_multiply_merge(A, B, C_gpu);
+        auto t2 = chrono::high_resolution_clock::now();
+        gpu_time += chrono::duration<double, milli>(t2 - t1).count();
+    }
+
+    for (int i = 0; i < ITERS; i++) {
+        auto t3 = chrono::high_resolution_clock::now();
+        C_gmp = gmp_mul(A, B);
+        auto t4 = chrono::high_resolution_clock::now();
+        gmp_time += chrono::duration<double, milli>(t4 - t3).count();
+    }
+
+    gpu_time /= ITERS;
+    gmp_time /= ITERS;
+
+    cout << "GPU avg time: " << gpu_time << " ms\n";
+    cout << "GMP avg time: " << gmp_time << " ms\n";
+
+    bool ok = compare_vectors(C_gpu, C_gmp);
+    cout << (ok ? GREEN_BOLD "[MATCH]\n" RESET : RED_BOLD "[MISMATCH]\n" RESET);
+}
+
+// ---------------- MAIN ----------------
 int main()
 {
     cout << YELLOW << "==== FULL MULTIPLICATION PIPELINE TEST ====\n" << RESET;
 
-    // Small sizes (debug friendly)
     // test_full_pipeline(4);
-    test_full_pipeline(8);
+    // test_full_pipeline(8);
     // test_full_pipeline(16);
 
-    // // Medium
-    // test_full_pipeline(64);
-    // test_full_pipeline(128);
-
-    // // Larger stress test
-    // test_full_pipeline(512);
+    benchmark_vs_gmp(4);
+    // benchmark_vs_gmp(64);
+    // benchmark_vs_gmp(256);
 
     cout << YELLOW << "\n==== TEST COMPLETE ====\n" << RESET;
     return 0;

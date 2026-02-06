@@ -5,7 +5,7 @@
 # Compiler and paths
 NVCC        := nvcc
 CXX         := g++
-CXXFLAGS    := -std=c++17 -O3 -Wall -Wextra
+CXXFLAGS    := -std=c++17 -O3 -Wall -Wextra -DDEBUG=0
 NVCCFLAGS   := -std=c++17 -O3 -Xcompiler -Wall -Xcompiler -Wextra
 
 CUDA_PATH   ?= /usr/local/cuda
@@ -16,8 +16,8 @@ INCLUDES    := -Iinclude -I$(CUDA_PATH)/include \
 			   -I$(HOME)/GPU-NTT/src/include/common \
                -I$(HOME)/GPU-NTT/src/include/ntt_merge
 
-LIB_PATHS   := -L$(HOME)/.local/lib
-LIBS        := -lntt-1.0
+LIB_PATHS   := -L$(HOME)/.local/lib -L$(HOME)/gmp-local/lib
+LIBS        := -lntt-1.0 -lgmp
 
 # Source directories
 SRC_DIR     := src

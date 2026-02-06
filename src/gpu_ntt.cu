@@ -37,16 +37,20 @@ __host__ void ntt_merge_forward(vector<TestDataTypeUint> &a, vector<vector<TestD
         // CPU NTT
         NTTCPU<TestDataType> generator(parameters);
         vector<TestDataType> cpu_ntt_result = generator.ntt(a32);
+        #if DEBUG == 1
         cout << "[CPU] Forward NTT result: [ ";
         for (const auto& x : cpu_ntt_result)
             cout << x << " ";
         cout << "]" << endl;
+        #endif
 
         vector<TestDataType> cpu_intt_result = generator.intt(cpu_ntt_result);
+        #if DEBUG == 1
         cout << "[CPU] Inverse NTT result: [ ";
         for (const auto& x : cpu_intt_result)
             cout << x << " ";
         cout << "]" << endl;
+        #endif
 
         // input copying to the device
         TestDataType* InOut_Datas;
@@ -58,10 +62,12 @@ __host__ void ntt_merge_forward(vector<TestDataTypeUint> &a, vector<vector<TestD
         GPUNTT_CUDA_CHECK(cudaMalloc(&Forward_Omega_Table_Device, parameters.root_of_unity_size * sizeof(Root<TestDataType>)));
         vector<Root<TestDataType>> forward_omega_table = parameters.gpu_root_of_unity_table_generator(parameters.forward_root_of_unity_table);
 
+        #if DEBUG == 1
         cout << "[GPU] Forward omega table values:" << endl;
         for (size_t j = 0; j < forward_omega_table.size(); j++) {
             cout << "  Omega[" << j << "] = " << static_cast<unsigned long long>(forward_omega_table[j]) << endl;
         }
+        #endif
 
         GPUNTT_CUDA_CHECK(cudaMemcpy(Forward_Omega_Table_Device, forward_omega_table.data(),
                 parameters.root_of_unity_size * sizeof(Root<TestDataType>), cudaMemcpyHostToDevice));
@@ -90,11 +96,13 @@ __host__ void ntt_merge_forward(vector<TestDataTypeUint> &a, vector<vector<TestD
                     parameters.n * sizeof(TestDataType),
                     cudaMemcpyDeviceToHost));
 
+        #if DEBUG == 1
         cout << "[GPU] NTT output (device -> host): [ ";
         for (long unsigned int j = 0; j < parameters.n; j++) {
             cout << static_cast<unsigned long long>(Output_Host[j]) << " ";
         }
         cout << "]" << endl;
+        #endif
 
         // Comparing GPU NTT results and CPU NTT results
         bool check = true;
@@ -126,10 +134,12 @@ __host__ void ntt_merge_forward(vector<TestDataTypeUint> &a, vector<vector<TestD
             a_mod[i].push_back(low);
         }
 
+        #if DEBUG == 1
         cout << "[HOST] a_mod[" << i << "] = [ ";
         for (size_t k = 0; k < a_mod[i].size(); k++)
             cout << a_mod[i][k] << " ";
         cout << "]" << endl;
+        #endif
 
         GPUNTT_CUDA_CHECK(cudaFree(InOut_Datas));
         GPUNTT_CUDA_CHECK(cudaFree(Forward_Omega_Table_Device));
@@ -186,6 +196,7 @@ __host__ void gpu_pointwise_multiply(const vector<vector<TestDataTypeUint>>& A_m
 
     cout << "[HOST] Starting GPU pointwise multiplication" << endl;
 
+    #if DEBUG == 1
     for (size_t m = 0; m < NUM_MODULI; ++m) {
         cout << "[HOST] A_mod for modulus " << m << " (mod = " << moduli[m] << "): [ ";
         for (size_t i = 0; i < N; ++i)
@@ -197,11 +208,15 @@ __host__ void gpu_pointwise_multiply(const vector<vector<TestDataTypeUint>>& A_m
             cout << B_mod[m][i] << " ";
         cout << "]" << endl;
     }
+    #endif
 
     C_mod.resize(NUM_MODULI, vector<TestDataTypeUint>(N));
 
     for (size_t m = 0; m < NUM_MODULI; ++m) {
+        #if DEBUG == 1
         cout << "[HOST] Processing modulus " << m << " (mod = " << moduli[m] << ")" << endl;
+        #endif
+
         // construct device arrays
         const TestDataTypeUint* A_host = A_mod[m].data();
         const TestDataTypeUint* B_host = B_mod[m].data();
@@ -225,10 +240,12 @@ __host__ void gpu_pointwise_multiply(const vector<vector<TestDataTypeUint>>& A_m
 
         GPUNTT_CUDA_CHECK(cudaMemcpy(C_host, C_dev, N * sizeof(TestDataTypeUint), cudaMemcpyDeviceToHost));
 
+        #if DEBUG == 1
         cout << "[HOST] Result for modulus " << m << ": [ ";
         for (size_t i = 0; i < N; ++i)
             cout << C_host[i] << " ";
         cout << "]" << endl;
+        #endif
 
         GPUNTT_CUDA_CHECK(cudaFree(A_dev));
         GPUNTT_CUDA_CHECK(cudaFree(B_dev));
@@ -252,10 +269,12 @@ __host__ void gpu_ntt_inverse(vector<vector<TestDataTypeUint>> &c_mod, vector<ve
         // CPU INTT
         NTTCPU<TestDataType> generator(parameters);
         vector<TestDataType> cpu_intt_result = generator.intt(c32);
+        #if DEBUG == 1
         cout << "[CPU] Inverse NTT result: [ ";
         for (const auto& x : cpu_intt_result)
             cout << x << " ";
         cout << "]" << endl;
+        #endif
 
         // input copying to the device
         TestDataType* InOut_Datas;
@@ -267,10 +286,12 @@ __host__ void gpu_ntt_inverse(vector<vector<TestDataTypeUint>> &c_mod, vector<ve
         GPUNTT_CUDA_CHECK(cudaMalloc(&Inverse_Omega_Table_Device, parameters.root_of_unity_size * sizeof(Root<TestDataType>)));
         vector<Root<TestDataType>> inverse_omega_table = parameters.gpu_root_of_unity_table_generator(parameters.inverse_root_of_unity_table);
 
+        #if DEBUG == 1
         cout << "[GPU] Inverse omega table values:" << endl;
         for (size_t j = 0; j < inverse_omega_table.size(); j++) {
             cout << "  Omega[" << j << "] = " << static_cast<unsigned long long>(inverse_omega_table[j]) << endl;
         }
+        #endif
 
         GPUNTT_CUDA_CHECK(cudaMemcpy(Inverse_Omega_Table_Device, inverse_omega_table.data(),
             parameters.root_of_unity_size * sizeof(Root<TestDataType>), cudaMemcpyHostToDevice));
@@ -308,11 +329,13 @@ __host__ void gpu_ntt_inverse(vector<vector<TestDataTypeUint>> &c_mod, vector<ve
         Output_Host = (TestDataType*) malloc(parameters.n * sizeof(TestDataType));
         GPUNTT_CUDA_CHECK(cudaMemcpy(Output_Host, Out_Datas, parameters.n * sizeof(TestDataType), cudaMemcpyDeviceToHost));
 
+        #if DEBUG == 1
         cout << "[GPU] INTT output (device -> host): [ ";
         for (long unsigned int j = 0; j < parameters.n; j++) {
             cout << static_cast<unsigned long long>(Output_Host[j]) << " ";
         }
         cout << "]" << endl;
+        #endif
 
         // Comparing GPU NTT results and CPU NTT results
         bool check = true;
@@ -345,10 +368,12 @@ __host__ void gpu_ntt_inverse(vector<vector<TestDataTypeUint>> &c_mod, vector<ve
             c_recovered[i].push_back(low);
         }
 
+        #if DEBUG == 1
         cout << "[HOST] c_recovered[" << i << "] = [ ";
         for (size_t k = 0; k < c_recovered[i].size(); k++)
             cout << c_recovered[i][k] << " ";
         cout << "]" << endl;
+        #endif
 
         GPUNTT_CUDA_CHECK(cudaFree(InOut_Datas));
         GPUNTT_CUDA_CHECK(cudaFree(Inverse_Omega_Table_Device));
