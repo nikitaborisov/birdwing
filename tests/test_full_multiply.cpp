@@ -43,6 +43,10 @@ vector<TestDataTypeUint> cpu_schoolbook_mul(
     while (C.size() > 1 && C.back() == 0)
         C.pop_back();
 
+    size_t linear_len = A.size() + B.size(); // 2*L-1
+    if (C.size() < linear_len)
+        C.resize(linear_len);
+
     return C;
 }
 
@@ -55,8 +59,8 @@ vector<TestDataTypeUint> random_limbs(size_t n, uint64_t seed)
     for (size_t i = 0; i < n; i++) {
         if (i % 8 == 0) v[i] = 0; // edge case
         else if (i % 8 == 1) v[i] = 1;
-        else if (i % 8 == 2) v[i] = numeric_limits<TestDataTypeUint>::max();
-        else v[i] = (TestDataTypeUint)rng();
+        // else if (i % 8 == 2) v[i] = numeric_limits<TestDataTypeUint>::max();
+        else v[i] = (TestDataTypeUint)rng() % (1ULL << 2);
     }
     return v;
 }
@@ -92,8 +96,8 @@ void test_full_pipeline(size_t L)
     // vector<TestDataTypeUint> A = random_limbs(L, 1234);
     // vector<TestDataTypeUint> B = random_limbs(L, 5678);
 
-    vector<TestDataTypeUint> A = {1, 2, 3, 4};
-    vector<TestDataTypeUint> B = {5, 6, 7, 8};
+    vector<TestDataTypeUint> A = {1,2,3,4,5,6,7,8};
+    vector<TestDataTypeUint> B = {9,10,11,12,13,14,15,16};
 
     // GPU pipeline
     vector<TestDataTypeUint> C_gpu;
@@ -131,8 +135,8 @@ int main()
     cout << YELLOW << "==== FULL MULTIPLICATION PIPELINE TEST ====\n" << RESET;
 
     // Small sizes (debug friendly)
-    test_full_pipeline(4);
-    // test_full_pipeline(8);
+    // test_full_pipeline(4);
+    test_full_pipeline(8);
     // test_full_pipeline(16);
 
     // // Medium

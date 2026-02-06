@@ -112,16 +112,13 @@ void host_multiply_merge(const vector<limb_t> &A, const vector<limb_t> &B, vecto
     // gpu_carry_propagate(C_big, C, BASE);
 
     C.resize(L_C + 1, 0);  // result limbs
-    uint64_t carry = 0;
+    __int128 carry = 0;
     for (size_t i = 0; i < L_C; ++i) {
-        unsigned __int128 temp = C_big[i] + carry;
+        __int128 temp = C_big[i] + carry;
         C[i] = static_cast<limb_t>(temp & 0xFFFFFFFF); // store 32-bit limb
-        carry = static_cast<uint64_t>(temp >> 32);
+        carry = static_cast<limb_t>(temp >> 32);
     }
-
-    // handle remaining carry
-    if (carry)
-        C[L_C] = carry;
+    if (carry != 0) C[L_C] = static_cast<limb_t>(carry);
 
     // trim
     while (C.size() > 1 && C.back() == 0)
