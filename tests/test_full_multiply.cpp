@@ -154,6 +154,9 @@ void test_full_pipeline(size_t L)
     vector<TestDataTypeUint> A = {1,2,3,4,5,6,7,8};
     vector<TestDataTypeUint> B = {9,10,11,12,13,14,15,16};
 
+    // vector<TestDataTypeUint> A = {1,2,3,4};
+    // vector<TestDataTypeUint> B = {5,6,7,8};
+
     // GPU pipeline
     vector<TestDataTypeUint> C_gpu;
     host_multiply_merge(A, B, C_gpu);
@@ -199,7 +202,7 @@ void benchmark_vs_gmp(size_t L)
     host_multiply_merge(A, B, warm);
     C_gmp = gmp_mul(A, B);
 
-    const int ITERS = 5;
+    const int ITERS = 100;
     double gpu_time = 0.0, gmp_time = 0.0;
 
     for (int i = 0; i < ITERS; i++) {
@@ -231,11 +234,11 @@ int main()
 {
     cout << YELLOW << "==== FULL MULTIPLICATION PIPELINE TEST ====\n" << RESET;
 
-    // test_full_pipeline(4);
+    test_full_pipeline(4);
     // test_full_pipeline(8);
     // test_full_pipeline(16);
 
-    benchmark_vs_gmp(4);
+    // benchmark_vs_gmp(4);
     // benchmark_vs_gmp(64);
     // benchmark_vs_gmp(256);
 

@@ -65,7 +65,7 @@ void log_timing_csv(
 }
 
 // host functions
-void host_multiply_merge(const vector<limb_t> &A, const vector<limb_t> &B, vector<limb_t> &C) {
+void host_multiply_merge(const vector<TestDataTypeUint> &A, const vector<TestDataTypeUint> &B, vector<TestDataTypeUint> &C) {
     auto t_start = hires_clock::now();
     size_t L_A = A.size();
     size_t L_B = B.size();
@@ -126,9 +126,7 @@ void host_multiply_merge(const vector<limb_t> &A, const vector<limb_t> &B, vecto
     #endif
 
     auto t8 = hires_clock::now();
-    // CRT recombination (CGBN)
-    // vector<__uint128_t> C_big(N);
-    // gpu_crt_reconstruct(C_mod, C_big, MODULI, NUM_MODULI);
+    
     vector<__uint128_t> C_big(N, 0);
 
     for (size_t i = 0; i < N; ++i) {
@@ -160,27 +158,17 @@ void host_multiply_merge(const vector<limb_t> &A, const vector<limb_t> &B, vecto
     __int128 carry = 0;
     for (size_t i = 0; i < L_C; ++i) {
         __int128 temp = C_big[i] + carry;
-        C[i] = (limb_t)(temp & 0xFFFFFFFF);
-        carry = (limb_t)(temp >> 32);
+        // THERE IS HARDCODING HERE, IF YOU NEED TO CHANGE TO 64 BITS LOOK HERE
+        C[i] = (TestDataTypeUint)(temp & 0xFFFFFFFF);
+        carry = (TestDataTypeUint)(temp >> 32);
     }
-    if (carry != 0) C[L_C] = static_cast<limb_t>(carry);
+    if (carry != 0) C[L_C] = static_cast<TestDataTypeUint>(carry);
 
     // trim
     while (C.size() > 1 && C.back() == 0)
         C.pop_back();
 
     auto t_end = hires_clock::now();
-
-    // ---------------- Timing Report ----------------
-    // cout << YELLOW << "\n[TIMING BREAKDOWN]\n" << RESET;
-
-    // cout << "Padding:              " << ms(t1 - t0).count()  << " ms\n";
-    // cout << "Forward NTT:          " << ms(t3 - t2).count()  << " ms\n";
-    // cout << "Pointwise multiply:   " << ms(t5 - t4).count()  << " ms\n";
-    // cout << "Inverse NTT:          " << ms(t7 - t6).count()  << " ms\n";
-    // cout << "CRT reconstruction:   " << ms(t9 - t8).count()  << " ms\n";
-    // cout << "Carry propagation:    " << ms(t_end - t10).count() << " ms\n";
-    // cout << "TOTAL:                " << ms(t_end - t_start).count() << " ms\n";
 
     log_timing_csv(
         L_A,

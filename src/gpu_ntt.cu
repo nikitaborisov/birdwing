@@ -261,8 +261,23 @@ __host__ void gpu_ntt_inverse(vector<vector<TestDataTypeUint>> &c_mod, vector<ve
         size_t N = c_mod[i].size();
         if (N == 0) continue;
         int logN = log2(static_cast<int>(N));
+
+        #if DEBUG == 1
+        cout << "[DEBUG] Input to INTT for modulus " << i << ": [ ";
+        for (size_t j = 0; j < min(N, (size_t)8); j++) {
+            cout << c_mod[i][j] << " ";
+        }
+        cout << "]" << endl;
+        #endif
         
         NTTParameters parameters(logN, factors[i], ReductionPolynomial::X_N_minus);
+
+        #if DEBUG == 1
+        cout << "[DEBUG] n_inv for modulus " << i << " = " << parameters.n_inv << endl;
+        TestDataTypeUint128 check2 = (TestDataTypeUint128)16 * (TestDataTypeUint128)parameters.n_inv;
+        uint64_t result_mod = (uint64_t)(check2 % moduli[i]);
+        cout << "[VERIFY] 16 * n_inv mod " << moduli[i] << " = " << result_mod << " (should be 1)" << endl;
+        #endif
 
         vector<TestDataType> c32(c_mod[i].begin(), c_mod[i].end());
         
@@ -284,6 +299,11 @@ __host__ void gpu_ntt_inverse(vector<vector<TestDataTypeUint>> &c_mod, vector<ve
         // Inverse omega table allocation + generation + copying to device
         Root<TestDataType>* Inverse_Omega_Table_Device;
         GPUNTT_CUDA_CHECK(cudaMalloc(&Inverse_Omega_Table_Device, parameters.root_of_unity_size * sizeof(Root<TestDataType>)));
+        
+        #if DEBUG == 1
+        cout << "[DEBUG] root_of_unity_size = " << parameters.root_of_unity_size << endl;
+        #endif
+
         vector<Root<TestDataType>> inverse_omega_table = parameters.gpu_root_of_unity_table_generator(parameters.inverse_root_of_unity_table);
 
         #if DEBUG == 1
@@ -308,6 +328,10 @@ __host__ void gpu_ntt_inverse(vector<vector<TestDataTypeUint>> &c_mod, vector<ve
         Ninverse<TestDataType> test_ninverse_[1] = {parameters.n_inv};
         GPUNTT_CUDA_CHECK(cudaMemcpy(test_ninverse, test_ninverse_, sizeof(Ninverse<TestDataType>), cudaMemcpyHostToDevice));
 
+        #if DEBUG == 1
+        cout << "[DEBUG] N = " << N << ", logN = " << logN << endl;
+        #endif
+        
         ntt_rns_configuration<TestDataType> cfg_intt = {
             .n_power = logN,
             .ntt_type = INVERSE,

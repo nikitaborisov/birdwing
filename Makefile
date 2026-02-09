@@ -5,8 +5,8 @@
 # Compiler and paths
 NVCC        := nvcc
 CXX         := g++
-CXXFLAGS    := -std=c++17 -O3 -Wall -Wextra -DDEBUG=0
-NVCCFLAGS   := -std=c++17 -O3 -Xcompiler -Wall -Xcompiler -Wextra -DDEBUG=0
+CXXFLAGS    := -std=c++17 -O3 -Wall -Wextra -DDEBUG=1
+NVCCFLAGS   := -std=c++17 -O3 -Xcompiler -Wall -Xcompiler -Wextra -DDEBUG=1
 
 CUDA_PATH   ?= /usr/local/cuda
 INCLUDES    := -Iinclude -I$(CUDA_PATH)/include \
