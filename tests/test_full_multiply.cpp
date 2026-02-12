@@ -6,6 +6,7 @@
 #include <chrono>
 #include <gmp.h>
 #include <algorithm>
+#include <fstream>
 
 #include "../include/multiply.h"
 #include "../include/config.h"
@@ -120,25 +121,93 @@ vector<TestDataTypeUint> from_mpz(const mpz_t x, size_t expected_limbs)
     return out;
 }
 
+void limbs_to_mpz(mpz_t result, uint32_t *limbs, size_t n) {
+    mpz_import(result, n, -1, sizeof(uint32_t), 0, 0, limbs);
+}
+
+vector<TestDataTypeUint> fast_from_mpz(mpz_t value, size_t expected_limbs)
+{
+    vector<TestDataTypeUint> out(expected_limbs);
+
+    size_t count = 0;
+    mpz_export(
+        out.data(),     // destination buffer
+        &count,         // actual number of limbs written
+        -1,             // least significant limb first
+        sizeof(uint32_t),
+        0,              // native endianness
+        0,              // no nail bits
+        value
+    );
+
+    // Zero-pad unused limbs if needed
+    out.resize(expected_limbs, 0);
+
+    return out;
+}
+
 vector<TestDataTypeUint> gmp_mul(
     const vector<TestDataTypeUint>& A,
     const vector<TestDataTypeUint>& B)
 {
+    using clock = std::chrono::high_resolution_clock;
+
+    auto t_total_start = clock::now();
+
     mpz_t a, b, c;
     mpz_init(a);
     mpz_init(b);
     mpz_init(c);
 
-    to_mpz(a, A);
-    to_mpz(b, B);
+    // ---- Import A ----
+    auto t1 = clock::now();
+    limbs_to_mpz(a, reinterpret_cast<uint32_t*>(const_cast<TestDataTypeUint*>(A.data())), A.size());
+    auto t2 = clock::now();
 
+    // ---- Import B ----
+    auto t3 = clock::now();
+    limbs_to_mpz(b, reinterpret_cast<uint32_t*>(const_cast<TestDataTypeUint*>(B.data())), B.size());
+    auto t4 = clock::now();
+
+    // ---- Multiply ----
+    auto t5 = clock::now();
     mpz_mul(c, a, b);
+    auto t6 = clock::now();
 
-    auto out = from_mpz(c, A.size() + B.size());
+    // ---- Export ----
+    auto t7 = clock::now();
+    auto out = fast_from_mpz(c, A.size() + B.size());
+    auto t8 = clock::now();
 
     mpz_clear(a);
     mpz_clear(b);
     mpz_clear(c);
+
+    auto t_total_end = clock::now();
+
+    // ---- Compute durations ----
+    double importA_us = std::chrono::duration<double, std::micro>(t2 - t1).count();
+    double importB_us = std::chrono::duration<double, std::micro>(t4 - t3).count();
+    double multiply_us = std::chrono::duration<double, std::micro>(t6 - t5).count();
+    double export_us = std::chrono::duration<double, std::micro>(t8 - t7).count();
+    double total_us = std::chrono::duration<double, std::micro>(t_total_end - t_total_start).count();
+
+    // ---- Append to CSV ----
+    static bool wrote_header = false;
+    std::ofstream csv("gmp_profile.csv", std::ios::app);
+
+    if (!wrote_header) {
+        csv << "sizeA,sizeB,importA_us,importB_us,multiply_us,export_us,total_us\n";
+        wrote_header = true;
+    }
+
+    csv << A.size() << ","
+        << B.size() << ","
+        << importA_us << ","
+        << importB_us << ","
+        << multiply_us << ","
+        << export_us << ","
+        << total_us << "\n";
 
     return out;
 }
@@ -164,20 +233,6 @@ void test_full_pipeline(size_t L)
 
     // CPU reference
     vector<TestDataTypeUint> C_cpu = cpu_schoolbook_mul(A, B);
-
-    // print cpu reference
-    // cout << "CPU result: ";
-    // for (auto limb : C_cpu) {
-    //     cout << limb << " ";
-    // }
-    // cout << "\n";
-
-    // print gpu result
-    // cout << "GPU result: ";
-    // for (auto limb : C_gpu) {
-    //     cout << limb << " ";
-    // }
-    // cout << "\n";
 
     // Compare
     bool ok = compare_vectors(C_gpu, C_cpu);
@@ -218,7 +273,7 @@ void benchmark_vs_gmp(size_t L)
     host_multiply_merge(A, B, warm);
     C_gmp = gmp_mul(A, B);
 
-    const int ITERS = 1;
+    const int ITERS = 100;
     double gpu_time = 0.0, gmp_time = 0.0;
 
     for (int i = 0; i < ITERS; i++) {
