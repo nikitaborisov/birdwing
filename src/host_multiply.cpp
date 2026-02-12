@@ -155,14 +155,25 @@ void host_multiply_merge(const vector<TestDataTypeUint> &A, const vector<TestDat
     auto t10 = hires_clock::now();
 
     C.resize(L_C + 1, 0);
+
+    const __int128 BASE = (__int128)1 << 32;
     __int128 carry = 0;
+
     for (size_t i = 0; i < L_C; ++i) {
         __int128 temp = C_big[i] + carry;
-        // THERE IS HARDCODING HERE, IF YOU NEED TO CHANGE TO 64 BITS LOOK HERE
-        C[i] = (TestDataTypeUint)(temp & 0xFFFFFFFF);
-        carry = (TestDataTypeUint)(temp >> 32);
+
+        __int128 limb = temp % BASE;
+        if (limb < 0) {
+            limb += BASE;
+            temp -= BASE;
+        }
+
+        C[i] = (TestDataTypeUint)limb;
+        carry = (temp - limb) / BASE;
     }
-    if (carry != 0) C[L_C] = static_cast<TestDataTypeUint>(carry);
+
+    if (carry != 0)
+        C[L_C] = (TestDataTypeUint)carry;
 
     // trim
     while (C.size() > 1 && C.back() == 0)

@@ -1,8 +1,11 @@
+#define DEBUG 0
+
 #include "modular_arith.cuh"
 #include <cuda_runtime.h>
 #include <iostream>
 #include <vector>
 #include <cmath>
+#include <chrono>
 
 #include "ntt.cuh"
 #include "config.h"
@@ -11,14 +14,6 @@ using namespace std;
 using namespace gpuntt;
 
 typedef Data32 TestDataType;
-
-// this must contain the 2^22nd and 2^23rd primitive roots of unity
-// NTTFactors<TestDataType> factors[3] = {
-//     {Modulus<TestDataType>(754974721), 75, 663},
-//     {Modulus<TestDataType>(595591169), 266, 721},
-//     {Modulus<TestDataType>(645922817), 331, 19}
-//     // {Modulus<TestDataType>(10753), 4305, 4894}
-// };
 
 vector<TestDataTypeUint> moduli = {754974721, 595591169, 645922817};
 vector<TestDataTypeUint> roots_of_unity_2_23 = {663, 721, 19};
@@ -48,6 +43,8 @@ __host__ void ntt_merge_forward(vector<TestDataTypeUint> &a, vector<vector<TestD
     cout << "Entering host side ntt_merge_forward function" << endl;
     #endif
 
+    auto t0 = chrono::high_resolution_clock::now();
+
     // need to convert to compatible data type
     vector<TestDataType> a32(a.begin(), a.end());
 
@@ -56,22 +53,21 @@ __host__ void ntt_merge_forward(vector<TestDataTypeUint> &a, vector<vector<TestD
     int logN = log2(static_cast<int>(N));
 
     auto factors_for_N = generate_factors_for_N(logN);
+    auto t1 = chrono::high_resolution_clock::now();
 
     for (int i = 0; i < NUM_MODULI; i ++ ) {
         NTTParameters parameters(logN, factors_for_N[i], ReductionPolynomial::X_N_minus); // N is the length of the array you are sending in
 
         // CPU NTT
+        #if DEBUG == 1
         NTTCPU<TestDataType> generator(parameters);
         vector<TestDataType> cpu_ntt_result = generator.ntt(a32);
-        #if DEBUG == 1
         cout << "[CPU] Forward NTT result: [ ";
         for (const auto& x : cpu_ntt_result)
             cout << x << " ";
         cout << "]" << endl;
-        #endif
 
         vector<TestDataType> cpu_intt_result = generator.intt(cpu_ntt_result);
-        #if DEBUG == 1
         cout << "[CPU] Inverse NTT result: [ ";
         for (const auto& x : cpu_intt_result)
             cout << x << " ";
@@ -128,7 +124,6 @@ __host__ void ntt_merge_forward(vector<TestDataTypeUint> &a, vector<vector<TestD
             cout << static_cast<unsigned long long>(Output_Host[j]) << " ";
         }
         cout << "]" << endl;
-        #endif
 
         // Comparing GPU NTT results and CPU NTT results
         bool check = true;
@@ -145,11 +140,10 @@ __host__ void ntt_merge_forward(vector<TestDataTypeUint> &a, vector<vector<TestD
 
             if ((j == (BATCH - 1)) && check)
             {
-                #if DEBUG == 1
                 cout << "All Correct for PerPolynomial NTT." << endl;
-                #endif
             }
         }
+        #endif
 
         // copy Output_Host to a_mod[i]
         if (a_mod.empty()) a_mod.push_back(vector<TestDataTypeUint>());
@@ -224,9 +218,7 @@ __host__ void gpu_pointwise_multiply(const vector<vector<TestDataTypeUint>>& A_m
 
     #if DEBUG == 1
     cout << "[HOST] Starting GPU pointwise multiplication" << endl;
-    #endif
 
-    #if DEBUG == 1
     for (size_t m = 0; m < NUM_MODULI; ++m) {
         cout << "[HOST] A_mod for modulus " << m << " (mod = " << moduli[m] << "): [ ";
         for (size_t i = 0; i < N; ++i)
@@ -316,9 +308,9 @@ __host__ void gpu_ntt_inverse(vector<vector<TestDataTypeUint>> &c_mod, vector<ve
         vector<TestDataType> c32(c_mod[i].begin(), c_mod[i].end());
         
         // CPU INTT
+        #if DEBUG == 1
         NTTCPU<TestDataType> generator(parameters);
         vector<TestDataType> cpu_intt_result = generator.intt(c32);
-        #if DEBUG == 1
         cout << "[CPU] Inverse NTT result: [ ";
         for (const auto& x : cpu_intt_result)
             cout << x << " ";
@@ -393,7 +385,6 @@ __host__ void gpu_ntt_inverse(vector<vector<TestDataTypeUint>> &c_mod, vector<ve
             cout << static_cast<unsigned long long>(Output_Host[j]) << " ";
         }
         cout << "]" << endl;
-        #endif
 
         // Comparing GPU NTT results and CPU NTT results
         bool check = true;
@@ -410,11 +401,10 @@ __host__ void gpu_ntt_inverse(vector<vector<TestDataTypeUint>> &c_mod, vector<ve
 
             if ((j == (BATCH - 1)) && check)
             {
-                #if DEBUG == 1
                 cout << "All Correct for PerPolynomial INTT." << endl;
-                #endif
             }
         }
+        #endif
 
         // copy Output_Host to c_recovered[i]
         if (c_recovered.empty()) c_recovered.push_back(vector<TestDataTypeUint>());

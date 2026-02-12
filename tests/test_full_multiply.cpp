@@ -64,7 +64,7 @@ vector<TestDataTypeUint> random_limbs(size_t n, uint64_t seed)
         if (i % 8 == 0) v[i] = 0; // edge case
         else if (i % 8 == 1) v[i] = 1;
         // else if (i % 8 == 2) v[i] = numeric_limits<TestDataTypeUint>::max();
-        else v[i] = (TestDataTypeUint)rng() % (1ULL << 10);
+        else v[i] = (TestDataTypeUint)rng() % (1ULL << 30);
     }
     return v;
 }
@@ -244,6 +244,7 @@ void test_full_pipeline(size_t L)
 }
 
 void test_identities(size_t L) {
+    cout << YELLOW << "\n[Test] Identities, L = " << L << " limbs" << RESET << "\n";
     vector<TestDataTypeUint> Z(L, 0);
     vector<TestDataTypeUint> O(L, 1);
     vector<TestDataTypeUint> R;
@@ -256,6 +257,7 @@ void test_identities(size_t L) {
 
     host_multiply_merge(O, O, R);
     assert(R[0] == 1);
+    cout << GREEN_BOLD << "[PASS] Identities correct\n" << RESET;
 }
 
 // ---------------- BENCHMARK ----------------
@@ -305,11 +307,12 @@ int main()
 {
     cout << YELLOW << "==== FULL MULTIPLICATION PIPELINE TEST ====\n" << RESET;
 
-    test_identities(128);
+    test_identities(1ULL << 20);
 
     test_full_pipeline(4);
     test_full_pipeline(8);
     test_full_pipeline(16);
+    test_full_pipeline(64);
 
     test_full_pipeline(128);
     test_full_pipeline(2048);
