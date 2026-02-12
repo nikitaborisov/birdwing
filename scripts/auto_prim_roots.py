@@ -1,95 +1,26 @@
-from math import gcd
-
-def factorize(n):
-    factors = []
-    d = 3
-    while d * d <= n:
-        while n % d == 0:
-            factors.append(d)
-            n //= d
-        d += 2
-    if n > 1:
-        factors.append(n)
-    return sorted(set(factors))
-
-
-def extract_k_m(p):
-    x = p - 1
-    k = 0
-    while x % 2 == 0:
-        x //= 2
-        k += 1
-    return k, x
-
-
-def find_2power_root(p, m, k, odd_part_factors):
-    all_factors = [2] + odd_part_factors
-
-    def is_primitive_root(g):
-        for q in all_factors:
-            if pow(g, (p - 1)//q, p) == 1:
-                return False
-        return True
-
-    for g in range(2, p):
-        if is_primitive_root(g):
-            break
-    else:
-        raise ValueError("No primitive root found.")
-
-    root = pow(g, m, p)
-
-    assert pow(root, 2**k, p) == 1
-    assert pow(root, 2**(k-1), p) != 1
-
-    return g, root
-
-
-def find_primitive_root(max_root_of_unity, max_order, k, p):
-    omega = pow(max_root_of_unity, 2 ** (max_order - k), p)
-
-    assert pow(omega, 2**k, p) == 1
-    assert pow(omega, 2**(k-1), p) != 1
-
-    return omega
-
-
-def find_2nth_root_given_omega(max_root_of_unity, max_order, k, p):
-    assert k + 1 <= max_order
-
-    psi = pow(max_root_of_unity, 2 ** (max_order - (k + 1)), p)
-
-    assert pow(psi, 2**(k+1), p) == 1
-    assert pow(psi, 2**k, p) != 1
-
-    return psi
+def find_root_of_unity(prime, logn):
+    root = 2
+    while True:
+        x = pow(root, 1 << (logn - 1), prime)
+        # Check: x^2 = 1 but x != 1  → x = -1 mod p
+        if x != 1 and pow(x, 2, prime) == 1:
+            return root
+        root += 1
 
 
 def main():
-    print("\n=== Auto Root of Unity Finder ===\n")
+    print("\n=== Simple Root of Unity Finder ===\n")
 
-    p = int(input("Enter prime p = "))
-    k_small = int(input("Enter desired k (for 2^k-th root): "))
+    prime = int(input("Enter prime p = "))
+    logn = int(input("Enter logn (find 2^logn-th root) = "))
 
-    k, m = extract_k_m(p)
-    odd_part_factors = factorize(m)
+    root = find_root_of_unity(prime, logn)
 
-    print("\nDetected structure:")
-    print(f"p - 1 = 2^{k} * {m}")
-    print(f"Odd part prime factors = {odd_part_factors}\n")
+    print(f"\nPrimitive 2^{logn}-th root of unity: {root}")
 
-    g, root = find_2power_root(p, m, k, odd_part_factors)
-
-    omega = find_primitive_root(root, k, k_small, p)
-    psi = find_2nth_root_given_omega(root, k, k_small, p)
-
-    print("Primitive root g:", g)
-    print(f"Max 2^{k}-th root of unity:", root)
-    print(f"Primitive 2^{k_small}-th root of unity:", omega)
-    print(f"Primitive 2^{k_small+1}-th root of unity:", psi)
-
-    assert pow(psi, 2, p) == omega
-    print("\nVerification passed: psi^2 = omega")
+    # Verification
+    print("Check root^(2^logn) mod p =", pow(root, 1 << logn, prime))
+    print("Check root^(2^(logn-1)) mod p =", pow(root, 1 << (logn - 1), prime))
 
 
 if __name__ == "__main__":

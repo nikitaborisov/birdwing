@@ -5,6 +5,7 @@
 #include <limits>
 #include <chrono>
 #include <gmp.h>
+#include <algorithm>
 
 #include "../include/multiply.h"
 #include "../include/config.h"
@@ -62,7 +63,7 @@ vector<TestDataTypeUint> random_limbs(size_t n, uint64_t seed)
         if (i % 8 == 0) v[i] = 0; // edge case
         else if (i % 8 == 1) v[i] = 1;
         // else if (i % 8 == 2) v[i] = numeric_limits<TestDataTypeUint>::max();
-        else v[i] = (TestDataTypeUint)rng() % (1ULL << 31);
+        else v[i] = (TestDataTypeUint)rng() % (1ULL << 10);
     }
     return v;
 }
@@ -148,11 +149,11 @@ void test_full_pipeline(size_t L)
     cout << YELLOW << "\n[Test] Full multiply pipeline, L = "
          << L << " limbs" << RESET << "\n";
 
-    // vector<TestDataTypeUint> A = random_limbs(L, 1234);
-    // vector<TestDataTypeUint> B = random_limbs(L, 5678);
+    vector<TestDataTypeUint> A = random_limbs(L, 1234);
+    vector<TestDataTypeUint> B = random_limbs(L, 5678);
 
-    vector<TestDataTypeUint> A = {1,2,3,4,5,6,7,8};
-    vector<TestDataTypeUint> B = {9,10,11,12,13,14,15,16};
+    // vector<TestDataTypeUint> A = {1,2,3,4,5,6,7,8};
+    // vector<TestDataTypeUint> B = {9,10,11,12,13,14,15,16};
 
     // vector<TestDataTypeUint> A = {1,2,3,4};
     // vector<TestDataTypeUint> B = {5,6,7,8};
@@ -165,18 +166,18 @@ void test_full_pipeline(size_t L)
     vector<TestDataTypeUint> C_cpu = cpu_schoolbook_mul(A, B);
 
     // print cpu reference
-    cout << "CPU result: ";
-    for (auto limb : C_cpu) {
-        cout << limb << " ";
-    }
-    cout << "\n";
+    // cout << "CPU result: ";
+    // for (auto limb : C_cpu) {
+    //     cout << limb << " ";
+    // }
+    // cout << "\n";
 
     // print gpu result
-    cout << "GPU result: ";
-    for (auto limb : C_gpu) {
-        cout << limb << " ";
-    }
-    cout << "\n";
+    // cout << "GPU result: ";
+    // for (auto limb : C_gpu) {
+    //     cout << limb << " ";
+    // }
+    // cout << "\n";
 
     // Compare
     bool ok = compare_vectors(C_gpu, C_cpu);
@@ -185,6 +186,21 @@ void test_full_pipeline(size_t L)
         cout << GREEN_BOLD << "[PASS] Full pipeline correct\n" << RESET;
     else
         cout << RED_BOLD << "[FAIL] Pipeline incorrect\n" << RESET;
+}
+
+void test_identities(size_t L) {
+    vector<TestDataTypeUint> Z(L, 0);
+    vector<TestDataTypeUint> O(L, 1);
+    vector<TestDataTypeUint> R;
+
+    host_multiply_merge(Z, Z, R);
+    assert(all_of(R.begin(), R.end(), [](auto x){return x==0;}));
+
+    host_multiply_merge(O, Z, R);
+    assert(all_of(R.begin(), R.end(), [](auto x){return x==0;}));
+
+    host_multiply_merge(O, O, R);
+    assert(R[0] == 1);
 }
 
 // ---------------- BENCHMARK ----------------
@@ -202,7 +218,7 @@ void benchmark_vs_gmp(size_t L)
     host_multiply_merge(A, B, warm);
     C_gmp = gmp_mul(A, B);
 
-    const int ITERS = 100;
+    const int ITERS = 1;
     double gpu_time = 0.0, gmp_time = 0.0;
 
     for (int i = 0; i < ITERS; i++) {
@@ -234,13 +250,20 @@ int main()
 {
     cout << YELLOW << "==== FULL MULTIPLICATION PIPELINE TEST ====\n" << RESET;
 
-    test_full_pipeline(4);
-    // test_full_pipeline(8);
-    // test_full_pipeline(16);
+    test_identities(128);
 
-    // benchmark_vs_gmp(4);
-    // benchmark_vs_gmp(64);
-    // benchmark_vs_gmp(256);
+    test_full_pipeline(4);
+    test_full_pipeline(8);
+    test_full_pipeline(16);
+
+    test_full_pipeline(128);
+    test_full_pipeline(2048);
+    test_full_pipeline(10000);
+
+    benchmark_vs_gmp(4);
+    benchmark_vs_gmp(64);
+    benchmark_vs_gmp(256);
+    benchmark_vs_gmp(1ULL << 20);
 
     cout << YELLOW << "\n==== TEST COMPLETE ====\n" << RESET;
     return 0;

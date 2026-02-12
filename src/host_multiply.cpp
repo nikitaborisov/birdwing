@@ -168,6 +168,10 @@ void host_multiply_merge(const vector<TestDataTypeUint> &A, const vector<TestDat
     while (C.size() > 1 && C.back() == 0)
         C.pop_back();
 
+    // pad to length L_C if needed
+    if (C.size() < (L_C + 1))
+        C.resize(L_C + 1, 0);
+
     auto t_end = hires_clock::now();
 
     log_timing_csv(

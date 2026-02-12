@@ -62,50 +62,50 @@ def find_2nth_root_given_omega(max_root_of_unity, max_order, k, p):
     
     return psi
 
-p = 2**43 * 3 * 5**2 + 1
-m = 3 * 5**2
-max_order = 43
-odd_part_factors = [3, 5]
+# p = 2**43 * 3 * 5**2 + 1
+# m = 3 * 5**2
+# max_order = 43
+# odd_part_factors = [3, 5]
 
-print("Starting computation for p =", p)
+# print("Starting computation for p =", p)
 
-g, root = find_2power_root(p, m, max_order, odd_part_factors)
+# g, root = find_2power_root(p, m, max_order, odd_part_factors)
 
-print("Primitive root:", g)
-print("2^k-th root of unity:", root)
+# print("Primitive root:", g)
+# print("2^k-th root of unity:", root)
 
-# length of NTT transform = 2^26
-k = 26
-omega = find_primitive_root(root, max_order, k, p)
-print(f"Primitive 2^{k}-th root of unity:", omega)
+# # length of NTT transform = 2^26
+# k = 26
+# omega = find_primitive_root(root, max_order, k, p)
+# print(f"Primitive 2^{k}-th root of unity:", omega)
 
-psi = find_2nth_root_given_omega(root, max_order, k, p)
-print(f"Primitive 2^{k+1}-th root of unity:", psi)
+# psi = find_2nth_root_given_omega(root, max_order, k, p)
+# print(f"Primitive 2^{k+1}-th root of unity:", psi)
 
-# make sure psi^2 = omega
-assert pow(psi, 2, p) == omega, "psi^2 != omega"
+# # make sure psi^2 = omega
+# assert pow(psi, 2, p) == omega, "psi^2 != omega"
 
-p = 2**44 * 3**2 * 7 + 1
-m = 3**2 * 7
-max_order = 44
-odd_part_factors = [3, 7]
+# p = 2**44 * 3**2 * 7 + 1
+# m = 3**2 * 7
+# max_order = 44
+# odd_part_factors = [3, 7]
 
-print("Starting computation for p =", p)
+# print("Starting computation for p =", p)
 
-g, root = find_2power_root(p, m, max_order, odd_part_factors)
+# g, root = find_2power_root(p, m, max_order, odd_part_factors)
 
-print("Primitive root:", g)
-print("2^k-th root of unity:", root)
+# print("Primitive root:", g)
+# print("2^k-th root of unity:", root)
 
-k = 26
-omega = find_primitive_root(root, max_order, k, p)
-print(f"Primitive 2^{k}-th root of unity:", omega)
+# k = 26
+# omega = find_primitive_root(root, max_order, k, p)
+# print(f"Primitive 2^{k}-th root of unity:", omega)
 
-psi = find_2nth_root_given_omega(root, max_order, k, p)
-print(f"Primitive 2^{k+1}-th root of unity:", psi)
+# psi = find_2nth_root_given_omega(root, max_order, k, p)
+# print(f"Primitive 2^{k+1}-th root of unity:", psi)
 
-# make sure psi^2 = omega
-assert pow(psi, 2, p) == omega, "psi^2 != omega"
+# # make sure psi^2 = omega
+# assert pow(psi, 2, p) == omega, "psi^2 != omega"
 
 p = 2**27 * 3 * 5 + 1
 m = 3 * 5
@@ -119,7 +119,7 @@ g, root = find_2power_root(p, m, max_order, odd_part_factors)
 print("Primitive root:", g)
 print("2^k-th root of unity:", root)
 
-k = 3
+k = 23
 omega = find_primitive_root(root, max_order, k, p)
 print(f"Primitive 2^{k}-th root of unity:", omega)
 
@@ -141,7 +141,7 @@ g, root = find_2power_root(p, m, max_order, odd_part_factors)
 print("Primitive root:", g)
 print("2^k-th root of unity:", root)
 
-k = 3
+k = 23
 omega = find_primitive_root(root, max_order, k, p)
 print(f"Primitive 2^{k}-th root of unity:", omega)
 
@@ -163,7 +163,7 @@ g, root = find_2power_root(p, m, max_order, odd_part_factors)
 print("Primitive root:", g)
 print("2^k-th root of unity:", root)
 
-k = 3
+k = 23
 omega = find_primitive_root(root, max_order, k, p)
 print(f"Primitive 2^{k}-th root of unity:", omega)
 

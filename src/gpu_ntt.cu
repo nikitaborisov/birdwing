@@ -12,17 +12,41 @@ using namespace gpuntt;
 
 typedef Data32 TestDataType;
 
-NTTFactors<TestDataType> factors[4] = {
-    {Modulus<TestDataType>(754974721), 205430076, 49823357},
-    {Modulus<TestDataType>(595591169), 68081344, 443510249},
-    {Modulus<TestDataType>(645922817), 146614077, 280465537}
-    // {Modulus<TestDataType>(10753), 4305, 4894}
-};
+// this must contain the 2^22nd and 2^23rd primitive roots of unity
+// NTTFactors<TestDataType> factors[3] = {
+//     {Modulus<TestDataType>(754974721), 75, 663},
+//     {Modulus<TestDataType>(595591169), 266, 721},
+//     {Modulus<TestDataType>(645922817), 331, 19}
+//     // {Modulus<TestDataType>(10753), 4305, 4894}
+// };
 
 vector<TestDataTypeUint> moduli = {754974721, 595591169, 645922817};
+vector<TestDataTypeUint> roots_of_unity_2_23 = {663, 721, 19};
+
+TestDataType mod_mul(long long a, long long b, long long mod) {
+    return (a * b) % mod;
+}
+
+// helper to generate new factors table compatible with given N
+std::array<NTTFactors<TestDataType>, NUM_MODULI> generate_factors_for_N(int logN) {
+    // we want the (2^logN - 1) and 2^logN th roots of unity from 2^23rd roots
+    std::array<NTTFactors<TestDataType>, NUM_MODULI> new_factors;
+    for (int i = 0; i < NUM_MODULI; i++) {
+        TestDataType root_2_23 = roots_of_unity_2_23[i];
+        // now need to square this root (23 - logN) times to get the 2^logN th root
+        TestDataType root_2_logN = root_2_23;
+        for (int j = 0; j < (23 - logN); j++) {
+            root_2_logN = mod_mul(root_2_logN, root_2_logN, moduli[i]);
+        }
+        new_factors[i] = {moduli[i], root_2_logN, mod_mul(root_2_logN, root_2_logN, moduli[i])};
+    }
+    return new_factors;
+}
 
 __host__ void ntt_merge_forward(vector<TestDataTypeUint> &a, vector<vector<TestDataTypeUint>> &a_mod) {
+    #if DEBUG == 1
     cout << "Entering host side ntt_merge_forward function" << endl;
+    #endif
 
     // need to convert to compatible data type
     vector<TestDataType> a32(a.begin(), a.end());
@@ -31,8 +55,10 @@ __host__ void ntt_merge_forward(vector<TestDataTypeUint> &a, vector<vector<TestD
     if (N == 0) return;
     int logN = log2(static_cast<int>(N));
 
+    auto factors_for_N = generate_factors_for_N(logN);
+
     for (int i = 0; i < NUM_MODULI; i ++ ) {
-        NTTParameters parameters(logN, factors[i], ReductionPolynomial::X_N_minus); // N is the length of the array you are sending in
+        NTTParameters parameters(logN, factors_for_N[i], ReductionPolynomial::X_N_minus); // N is the length of the array you are sending in
 
         // CPU NTT
         NTTCPU<TestDataType> generator(parameters);
@@ -119,7 +145,9 @@ __host__ void ntt_merge_forward(vector<TestDataTypeUint> &a, vector<vector<TestD
 
             if ((j == (BATCH - 1)) && check)
             {
+                #if DEBUG == 1
                 cout << "All Correct for PerPolynomial NTT." << endl;
+                #endif
             }
         }
 
@@ -194,7 +222,9 @@ __global__ void pointwise_mul_kernel(TestDataTypeUint* A,
 __host__ void gpu_pointwise_multiply(const vector<vector<TestDataTypeUint>>& A_mod, const vector<vector<TestDataTypeUint>>& B_mod, vector<vector<TestDataTypeUint>>& C_mod) {
     size_t N = A_mod[0].size();
 
+    #if DEBUG == 1
     cout << "[HOST] Starting GPU pointwise multiplication" << endl;
+    #endif
 
     #if DEBUG == 1
     for (size_t m = 0; m < NUM_MODULI; ++m) {
@@ -254,7 +284,9 @@ __host__ void gpu_pointwise_multiply(const vector<vector<TestDataTypeUint>>& A_m
 }
 
 __host__ void gpu_ntt_inverse(vector<vector<TestDataTypeUint>> &c_mod, vector<vector<TestDataTypeUint>> &c_recovered) {
+    #if DEBUG == 1
     cout << "Entering host side gpu_ntt_inverse function" << endl;
+    #endif
 
     for (int i = 0; i < NUM_MODULI; i ++ ) {
         // get the size of c_mod for logN in parameters
@@ -270,7 +302,9 @@ __host__ void gpu_ntt_inverse(vector<vector<TestDataTypeUint>> &c_mod, vector<ve
         cout << "]" << endl;
         #endif
         
-        NTTParameters parameters(logN, factors[i], ReductionPolynomial::X_N_minus);
+        auto factors_for_N = generate_factors_for_N(logN);
+
+        NTTParameters parameters(logN, factors_for_N[i], ReductionPolynomial::X_N_minus);
 
         #if DEBUG == 1
         cout << "[DEBUG] n_inv for modulus " << i << " = " << parameters.n_inv << endl;
@@ -376,7 +410,9 @@ __host__ void gpu_ntt_inverse(vector<vector<TestDataTypeUint>> &c_mod, vector<ve
 
             if ((j == (BATCH - 1)) && check)
             {
+                #if DEBUG == 1
                 cout << "All Correct for PerPolynomial INTT." << endl;
+                #endif
             }
         }
 
