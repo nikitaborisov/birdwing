@@ -21,10 +21,10 @@ using namespace std;
 using limb_t = TestDataTypeUint; // each limb is stored in 32-bit containers
 
 // host functions
-void host_multiply_merge(const vector<TestDataTypeUint> &A, const vector<TestDataTypeUint> &B, vector<TestDataTypeUint> &C) {
+void host_multiply_merge(const vector<TestDataTypeUint> &A, const vector<TestDataTypeUint> &B, vector<TestDataTypeUint> &C, chrono::duration<double, milli> &duration) {
     size_t L_A = A.size();
     size_t L_B = B.size();
-    size_t L_C = L_A + L_B - 1;  // not sure what the length of outputs will be? paper suggests L_A = L_B = L_C
+    size_t L_C = L_A + L_B - 1;
 
     size_t N = 1;
     while (N < L_C)
@@ -34,14 +34,16 @@ void host_multiply_merge(const vector<TestDataTypeUint> &A, const vector<TestDat
     copy(A.begin(), A.end(), A_pad.begin());
     copy(B.begin(), B.end(), B_pad.begin());
 
-    // ntt_merge_forward should return 4 versions of the NTT. don't do the for loop
     vector<vector<TestDataTypeUint>> C_recovered;
 
     NTTContext ctx = setup_ntt_context(N);
+
+    auto t0 = chrono::high_resolution_clock::now();
     execute_ntt_multiply(ctx, A_pad, B_pad, C_recovered);
+    auto t1 = chrono::high_resolution_clock::now();
+
     cleanup_ntt_context(ctx);
 
-    // ---------------- CRT Reconstruction ----------------
     #if DEBUG == 1
     for (size_t j = 0; j < NUM_MODULI; ++j) {
         cout << "[Host] Inverse NTT result mod " << moduli[j] << ": ";
@@ -52,6 +54,7 @@ void host_multiply_merge(const vector<TestDataTypeUint> &A, const vector<TestDat
     }
     #endif
     
+    auto t2 = chrono::high_resolution_clock::now();
     vector<__uint128_t> C_big(N, 0);
 
     for (size_t i = 0; i < N; ++i) {
@@ -72,7 +75,7 @@ void host_multiply_merge(const vector<TestDataTypeUint> &A, const vector<TestDat
             M *= moduli[j];
 
         if (C_big[i] > M/2)
-            C_big[i] -= M;   // now signed
+            C_big[i] -= M;
     }
 
     C.resize(L_C + 1, 0);
@@ -103,4 +106,7 @@ void host_multiply_merge(const vector<TestDataTypeUint> &A, const vector<TestDat
     // pad to length L_C if needed
     if (C.size() < (L_C + 1))
         C.resize(L_C + 1, 0);
+    auto t3 = chrono::high_resolution_clock::now();
+
+    duration = t1 - t0 + t3 - t2;
 }

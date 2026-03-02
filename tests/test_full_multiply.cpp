@@ -229,7 +229,8 @@ void test_full_pipeline(size_t L)
 
     // GPU pipeline
     vector<TestDataTypeUint> C_gpu;
-    host_multiply_merge(A, B, C_gpu);
+    chrono::duration<double, milli> duration;
+    host_multiply_merge(A, B, C_gpu, duration);
 
     // CPU reference
     vector<TestDataTypeUint> C_cpu = cpu_schoolbook_mul(A, B);
@@ -249,13 +250,14 @@ void test_identities(size_t L) {
     vector<TestDataTypeUint> O(L, 1);
     vector<TestDataTypeUint> R;
 
-    host_multiply_merge(Z, Z, R);
+    chrono::duration<double, milli> duration;
+    host_multiply_merge(Z, Z, R, duration);
     assert(all_of(R.begin(), R.end(), [](auto x){return x==0;}));
 
-    host_multiply_merge(O, Z, R);
+    host_multiply_merge(O, Z, R, duration);
     assert(all_of(R.begin(), R.end(), [](auto x){return x==0;}));
 
-    host_multiply_merge(O, O, R);
+    host_multiply_merge(O, O, R, duration);
     assert(R[0] == 1);
     cout << GREEN_BOLD << "[PASS] Identities correct\n" << RESET;
 }
@@ -272,17 +274,17 @@ void benchmark_vs_gmp(size_t L)
 
     // Warm-up
     vector<TestDataTypeUint> warm;
-    host_multiply_merge(A, B, warm);
+    chrono::duration<double, milli> duration;
+    host_multiply_merge(A, B, warm, duration);
     C_gmp = gmp_mul(A, B);
 
     const int ITERS = 100;
     double gpu_time = 0.0, gmp_time = 0.0;
 
     for (int i = 0; i < ITERS; i++) {
-        auto t1 = chrono::high_resolution_clock::now();
-        host_multiply_merge(A, B, C_gpu);
-        auto t2 = chrono::high_resolution_clock::now();
-        gpu_time += chrono::duration<double, milli>(t2 - t1).count();
+        chrono::duration<double, milli> duration;
+        host_multiply_merge(A, B, C_gpu, duration);
+        gpu_time += duration.count();
     }
 
     for (int i = 0; i < ITERS; i++) {
