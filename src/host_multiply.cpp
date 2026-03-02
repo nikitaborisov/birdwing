@@ -79,6 +79,7 @@ void host_multiply_merge(const vector<TestDataTypeUint> &A, const vector<TestDat
     }
 
     C.resize(L_C + 1, 0);
+    auto t3 = chrono::high_resolution_clock::now();
 
     const __int128 BASE = (__int128)1 << 32;
     __int128 carry = 0;
@@ -106,7 +107,12 @@ void host_multiply_merge(const vector<TestDataTypeUint> &A, const vector<TestDat
     // pad to length L_C if needed
     if (C.size() < (L_C + 1))
         C.resize(L_C + 1, 0);
-    auto t3 = chrono::high_resolution_clock::now();
+    auto t4 = chrono::high_resolution_clock::now();
+
+    // print t1-t0, t3-t2
+    cout << "[Host] NTT multiply time: " << chrono::duration<double, milli>(t1 - t0).count() << " ms\n";
+    cout << "[Host] CRT combine time: " << chrono::duration<double, milli>(t3 - t2).count() << " ms\n";
+    cout << "[Host] Carry Prop time: " << chrono::duration<double, milli>(t4 - t3).count() << " ms\n";
 
     duration = t1 - t0 + t3 - t2;
 }

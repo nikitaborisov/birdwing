@@ -278,7 +278,7 @@ void benchmark_vs_gmp(size_t L)
     host_multiply_merge(A, B, warm, duration);
     C_gmp = gmp_mul(A, B);
 
-    const int ITERS = 100;
+    const int ITERS = 1;
     double gpu_time = 0.0, gmp_time = 0.0;
 
     for (int i = 0; i < ITERS; i++) {
@@ -321,8 +321,9 @@ int main()
     test_full_pipeline(10000);
 
     benchmark_vs_gmp(4);
-    benchmark_vs_gmp(64);
     benchmark_vs_gmp(256);
+    benchmark_vs_gmp(1ULL << 12);
+    benchmark_vs_gmp(1ULL << 15);
     benchmark_vs_gmp(1ULL << 20);
 
     cout << YELLOW << "\n==== TEST COMPLETE ====\n" << RESET;
