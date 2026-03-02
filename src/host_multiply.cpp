@@ -86,31 +86,33 @@ void host_multiply_merge(const vector<TestDataTypeUint> &A, const vector<TestDat
     // ntt_merge_forward should return 4 versions of the NTT. don't do the for loop
     vector<vector<TestDataTypeUint>> A_mod(NUM_MODULI, vector<TestDataTypeUint>(N));
     vector<vector<TestDataTypeUint>> B_mod(NUM_MODULI, vector<TestDataTypeUint>(N));
+    vector<vector<TestDataTypeUint>> C_recovered;
+    ntt_multiply(A_pad, B_pad, C_recovered);
     auto t2 = hires_clock::now();
-    ntt_merge_forward(A_pad, A_mod);
-    ntt_merge_forward(B_pad, B_mod);
+    // ntt_merge_forward(A_pad, A_mod);
+    // ntt_merge_forward(B_pad, B_mod);
     auto t3 = hires_clock::now();
 
-    // pointwise multiplication for each of the elements of A_mod, B_mod
-    vector<vector<TestDataTypeUint>> C_mod;
+    // // pointwise multiplication for each of the elements of A_mod, B_mod
+    // vector<vector<TestDataTypeUint>> C_mod;
     auto t4 = hires_clock::now();
-    gpu_pointwise_multiply(A_mod, B_mod, C_mod);
+    // gpu_pointwise_multiply(A_mod, B_mod, C_mod);
     auto t5 = hires_clock::now();
-    // print pointwise multiplication results
-    #if DEBUG == 1
-    for (size_t j = 0; j < NUM_MODULI; ++j) {
-        cout << "[Host] Pointwise multiplication mod " << moduli[j] << ": ";
-        for (size_t i = 0; i < N; ++i) {
-            cout << C_mod[j][i] << " ";
-        }
-        cout << endl;
-    }
-    #endif
+    // // print pointwise multiplication results
+    // #if DEBUG == 1
+    // for (size_t j = 0; j < NUM_MODULI; ++j) {
+    //     cout << "[Host] Pointwise multiplication mod " << moduli[j] << ": ";
+    //     for (size_t i = 0; i < N; ++i) {
+    //         cout << C_mod[j][i] << " ";
+    //     }
+    //     cout << endl;
+    // }
+    // #endif
 
-    // gpu_ntt_inverse calls, should do the inverse ntt computation for all 4 C_mod vectors
-    vector<vector<TestDataTypeUint>> C_recovered;
+    // // gpu_ntt_inverse calls, should do the inverse ntt computation for all 4 C_mod vectors
+    // vector<vector<TestDataTypeUint>> C_recovered;
     auto t6 = hires_clock::now();
-    gpu_ntt_inverse(C_mod, C_recovered);
+    // gpu_ntt_inverse(C_mod, C_recovered);
     auto t7 = hires_clock::now();
 
     // ---------------- CRT Reconstruction ----------------

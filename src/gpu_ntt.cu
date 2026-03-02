@@ -21,16 +21,16 @@ typedef Data32 TestDataType;
 vector<TestDataTypeUint> moduli = {754974721, 595591169, 645922817};
 vector<TestDataTypeUint> roots_of_unity_2_23 = {663, 721, 19};
 
-void log_durations_to_csv(
-    const std::string &filename,
-    const std::vector<double> &durations,
-    const std::vector<std::string> &labels,
+static void log_durations_to_csv(
+    const string &filename,
+    const vector<double> &durations,
+    const vector<string> &labels,
     size_t L
 ) {
-    std::ofstream file;
-    bool file_exists = std::ifstream(filename).good();
+    ofstream file;
+    bool file_exists = ifstream(filename).good();
 
-    file.open(filename, std::ios::app);
+    file.open(filename, ios::app);
 
     // Write CSV header only once
     if (!file_exists) {
@@ -42,21 +42,21 @@ void log_durations_to_csv(
         file << L << ","
              << i << ","
              << (i < labels.size() ? labels[i] : "unknown") << ","
-             << std::fixed << std::setprecision(6) << durations[i]
+             << fixed << setprecision(6) << durations[i]
              << "\n";
     }
 
     file.close();
 }
 
-TestDataType mod_mul(long long a, long long b, long long mod) {
+static TestDataType mod_mul(long long a, long long b, long long mod) {
     return (a * b) % mod;
 }
 
 // helper to generate new factors table compatible with given N
-std::array<NTTFactors<TestDataType>, NUM_MODULI> generate_factors_for_N(int logN) {
+static array<NTTFactors<TestDataType>, NUM_MODULI> generate_factors_for_N(int logN) {
     // we want the (2^logN - 1) and 2^logN th roots of unity from 2^23rd roots
-    std::array<NTTFactors<TestDataType>, NUM_MODULI> new_factors;
+    array<NTTFactors<TestDataType>, NUM_MODULI> new_factors;
     for (int i = 0; i < NUM_MODULI; i++) {
         TestDataType root_2_23 = roots_of_unity_2_23[i];
         // now need to square this root (23 - logN) times to get the 2^logN th root
@@ -67,181 +67,6 @@ std::array<NTTFactors<TestDataType>, NUM_MODULI> generate_factors_for_N(int logN
         new_factors[i] = {moduli[i], root_2_logN, mod_mul(root_2_logN, root_2_logN, moduli[i])};
     }
     return new_factors;
-}
-
-__host__ void ntt_merge_forward(vector<TestDataTypeUint> &a, vector<vector<TestDataTypeUint>> &a_mod) {
-    #if DEBUG == 1
-    cout << "Entering host side ntt_merge_forward function" << endl;
-    #endif
-
-    // array of times
-    vector<double> durations;
-    vector<string> labels;
-
-    auto t0 = chrono::high_resolution_clock::now();
-
-    // need to convert to compatible data type
-    vector<TestDataType> a32(a.begin(), a.end());
-
-    size_t N = a.size();
-    if (N == 0) return;
-    int logN = log2(static_cast<int>(N));
-
-    auto factors_for_N = generate_factors_for_N(logN);
-    auto t1 = chrono::high_resolution_clock::now();
-    durations.push_back(chrono::duration<double, milli>(t1 - t0).count());
-    labels.push_back("preprocessing");
-
-    for (int i = 0; i < NUM_MODULI; i ++ ) {
-        auto t2 = chrono::high_resolution_clock::now();
-        NTTParameters parameters(logN, factors_for_N[i], ReductionPolynomial::X_N_minus); // N is the length of the array you are sending in
-        auto t3 = chrono::high_resolution_clock::now();
-        durations.push_back(chrono::duration<double, milli>(t3 - t2).count());
-        labels.push_back("NTTParameters initialization");
-
-        // CPU NTT
-        #if DEBUG == 1
-        NTTCPU<TestDataType> generator(parameters);
-        vector<TestDataType> cpu_ntt_result = generator.ntt(a32);
-        cout << "[CPU] Forward NTT result: [ ";
-        for (const auto& x : cpu_ntt_result)
-            cout << x << " ";
-        cout << "]" << endl;
-
-        vector<TestDataType> cpu_intt_result = generator.intt(cpu_ntt_result);
-        cout << "[CPU] Inverse NTT result: [ ";
-        for (const auto& x : cpu_intt_result)
-            cout << x << " ";
-        cout << "]" << endl;
-        #endif
-
-        // input copying to the device
-        auto t4 = chrono::high_resolution_clock::now();
-        TestDataType* InOut_Datas;
-        GPUNTT_CUDA_CHECK(cudaMalloc(&InOut_Datas, parameters.n * sizeof(TestDataType)));
-        GPUNTT_CUDA_CHECK(cudaMemcpy(InOut_Datas, a32.data(), parameters.n * sizeof(TestDataType), cudaMemcpyHostToDevice));
-        auto t5 = chrono::high_resolution_clock::now();
-        durations.push_back(chrono::duration<double, milli>(t5 - t4).count());
-        labels.push_back("input copying to device");
-
-        // Forward omega table allocation + generation + copying to device
-        auto t6 = chrono::high_resolution_clock::now();
-        Root<TestDataType>* Forward_Omega_Table_Device;
-        GPUNTT_CUDA_CHECK(cudaMalloc(&Forward_Omega_Table_Device, parameters.root_of_unity_size * sizeof(Root<TestDataType>)));
-        vector<Root<TestDataType>> forward_omega_table = parameters.gpu_root_of_unity_table_generator(parameters.forward_root_of_unity_table);
-        auto t7 = chrono::high_resolution_clock::now();
-        durations.push_back(chrono::duration<double, milli>(t7 - t6).count());
-        labels.push_back("forward omega table alloc and generation");
-
-        #if DEBUG == 1
-        cout << "[GPU] Forward omega table values:" << endl;
-        for (size_t j = 0; j < forward_omega_table.size(); j++) {
-            cout << "  Omega[" << j << "] = " << static_cast<unsigned long long>(forward_omega_table[j]) << endl;
-        }
-        #endif
-
-        GPUNTT_CUDA_CHECK(cudaDeviceSynchronize());
-        auto t8 = chrono::high_resolution_clock::now();
-        GPUNTT_CUDA_CHECK(cudaMemcpy(Forward_Omega_Table_Device, forward_omega_table.data(),
-                parameters.root_of_unity_size * sizeof(Root<TestDataType>), cudaMemcpyHostToDevice));
-        GPUNTT_CUDA_CHECK(cudaDeviceSynchronize());
-        auto t9 = chrono::high_resolution_clock::now();
-        durations.push_back(chrono::duration<double, milli>(t9 - t8).count());
-        labels.push_back("copying forward omega table to device");
-
-        // GPU NTT inplace call
-        auto t10 = chrono::high_resolution_clock::now();
-        Modulus<TestDataType>* test_modulus;
-        GPUNTT_CUDA_CHECK(cudaMalloc(&test_modulus, sizeof(Modulus<TestDataType>)));
-        Modulus<TestDataType> test_modulus_[1] = {parameters.modulus};
-        GPUNTT_CUDA_CHECK(cudaMemcpy(test_modulus, test_modulus_, sizeof(Modulus<TestDataType>), cudaMemcpyHostToDevice));
-        auto t11 = chrono::high_resolution_clock::now();
-        durations.push_back(chrono::duration<double, milli>(t11 - t10).count());
-        labels.push_back("modulus copying to device");
-
-        GPUNTT_CUDA_CHECK(cudaDeviceSynchronize());
-        auto t12 = chrono::high_resolution_clock::now();
-        ntt_rns_configuration<TestDataType> cfg_ntt = {
-            .n_power = logN,
-            .ntt_type = FORWARD,
-            .ntt_layout = PerPolynomial,
-            .reduction_poly = ReductionPolynomial::X_N_minus,
-            .zero_padding = false,
-            .stream = 0};
-    
-        // launching kernel for gpu ntt in place
-        GPU_NTT_Inplace(InOut_Datas, Forward_Omega_Table_Device, test_modulus, cfg_ntt, BATCH, 1);
-        GPUNTT_CUDA_CHECK(cudaDeviceSynchronize());
-        auto t13 = chrono::high_resolution_clock::now();
-        durations.push_back(chrono::duration<double, milli>(t13 - t12).count());
-        labels.push_back("GPU NTT inplace execution");
-
-        // copying output to host
-        auto t14 = chrono::high_resolution_clock::now();
-        TestDataType* Output_Host;
-        Output_Host = (TestDataType*) malloc(parameters.n * sizeof(TestDataType));
-        GPUNTT_CUDA_CHECK(cudaMemcpy(Output_Host, InOut_Datas,
-                    parameters.n * sizeof(TestDataType),
-                    cudaMemcpyDeviceToHost));
-        auto t15 = chrono::high_resolution_clock::now();
-        durations.push_back(chrono::duration<double, milli>(t15 - t14).count());
-        labels.push_back("copying output to host");
-
-        #if DEBUG == 1
-        cout << "[GPU] NTT output (device -> host): [ ";
-        for (long unsigned int j = 0; j < parameters.n; j++) {
-            cout << static_cast<unsigned long long>(Output_Host[j]) << " ";
-        }
-        cout << "]" << endl;
-
-        // Comparing GPU NTT results and CPU NTT results
-        bool check = true;
-        for (int j = 0; j < BATCH; j++)
-        {
-            check = check_result(Output_Host + (j * parameters.n),
-                                    cpu_ntt_result.data(), parameters.n);
-
-            if (!check)
-            {
-                cout << "(in " << j << ". Poly.)" << endl;
-                break;
-            }
-
-            if ((j == (BATCH - 1)) && check)
-            {
-                cout << "All Correct for PerPolynomial NTT." << endl;
-            }
-        }
-        #endif
-
-        // copy Output_Host to a_mod[i]
-        auto t16 = chrono::high_resolution_clock::now();
-        if (a_mod.empty()) a_mod.push_back(vector<TestDataTypeUint>());
-        
-        a_mod[i].clear();
-        a_mod[i].reserve(parameters.n * 2);  // each data32 has two TestDataTypeUints? i'm not sure how the datatypes will work
-        
-        for (size_t j = 0; j < parameters.n; j++) {
-            TestDataTypeUint low  = static_cast<TestDataTypeUint>(Output_Host[j] & 0xFFFFFFFF);
-            a_mod[i].push_back(low);
-        }
-
-        #if DEBUG == 1
-        cout << "[HOST] a_mod[" << i << "] = [ ";
-        for (size_t k = 0; k < a_mod[i].size(); k++)
-            cout << a_mod[i][k] << " ";
-        cout << "]" << endl;
-        #endif
-
-        GPUNTT_CUDA_CHECK(cudaFree(InOut_Datas));
-        GPUNTT_CUDA_CHECK(cudaFree(Forward_Omega_Table_Device));
-        free(Output_Host);
-        auto t17 = chrono::high_resolution_clock::now();
-        durations.push_back(chrono::duration<double, milli>(t17 - t16).count());
-        labels.push_back("postprocessing and cleanup");
-    }
-
-    log_durations_to_csv("gpu_ntt_forward_durations.csv", durations, labels, N/2);
 }
 
 template <typename T>
@@ -288,131 +113,200 @@ __global__ void pointwise_mul_kernel(TestDataTypeUint* A,
     }
 }
 
-__host__ void gpu_pointwise_multiply(const vector<vector<TestDataTypeUint>>& A_mod, const vector<vector<TestDataTypeUint>>& B_mod, vector<vector<TestDataTypeUint>>& C_mod) {
-    size_t N = A_mod[0].size();
-
+__host__ void ntt_multiply(vector<TestDataTypeUint> &a, vector<TestDataTypeUint> &b, vector<vector<TestDataTypeUint>> &c_recovered) {
     #if DEBUG == 1
-    cout << "[HOST] Starting GPU pointwise multiplication" << endl;
-
-    for (size_t m = 0; m < NUM_MODULI; ++m) {
-        cout << "[HOST] A_mod for modulus " << m << " (mod = " << moduli[m] << "): [ ";
-        for (size_t i = 0; i < N; ++i)
-            cout << A_mod[m][i] << " ";
-        cout << "]" << endl;
-
-        cout << "[HOST] B_mod for modulus " << m << " (mod = " << moduli[m] << "): [ ";
-        for (size_t i = 0; i < N; ++i)
-            cout << B_mod[m][i] << " ";
-        cout << "]" << endl;
-    }
+    cout << "Entering host side ntt_merge_forward function" << endl;
     #endif
 
-    C_mod.resize(NUM_MODULI, vector<TestDataTypeUint>(N));
+    // array of times
+    vector<double> durations;
+    vector<string> labels;
+    vector<vector<TestDataTypeUint>> a_mod;
+    vector<vector<TestDataTypeUint>> b_mod;
+    vector<TestDataType*> a_InOut_Datas(NUM_MODULI);
+    vector<TestDataType*> b_InOut_Datas(NUM_MODULI);
+    vector<TestDataType*> c_pointwise_mul(NUM_MODULI);
 
-    for (size_t m = 0; m < NUM_MODULI; ++m) {
-        #if DEBUG == 1
-        cout << "[HOST] Processing modulus " << m << " (mod = " << moduli[m] << ")" << endl;
-        #endif
+    auto t0 = chrono::high_resolution_clock::now();
 
-        // construct device arrays
-        const TestDataTypeUint* A_host = A_mod[m].data();
-        const TestDataTypeUint* B_host = B_mod[m].data();
+    // need to convert to compatible data type
+    vector<TestDataType> a32(a.begin(), a.end());
+    vector<TestDataType> b32(b.begin(), b.end());
 
-        TestDataTypeUint* C_host = C_mod[m].data();
-        TestDataTypeUint modulus = moduli[m];
+    size_t N = a.size();
+    if (N == 0) return;
+    int logN = log2(static_cast<int>(N));
 
-        TestDataTypeUint *A_dev, *B_dev, *C_dev;
-        GPUNTT_CUDA_CHECK(cudaMalloc(&A_dev, N * sizeof(TestDataTypeUint)));
-        GPUNTT_CUDA_CHECK(cudaMalloc(&B_dev, N * sizeof(TestDataTypeUint)));
-        GPUNTT_CUDA_CHECK(cudaMalloc(&C_dev, N * sizeof(TestDataTypeUint)));
-
-        GPUNTT_CUDA_CHECK(cudaMemcpy(A_dev, A_host, N * sizeof(TestDataTypeUint), cudaMemcpyHostToDevice));
-        GPUNTT_CUDA_CHECK(cudaMemcpy(B_dev, B_host, N * sizeof(TestDataTypeUint), cudaMemcpyHostToDevice));
-
-        int threads = 256;
-        int blocks = (N + threads - 1) / threads;
-
-        pointwise_mul_kernel<<<blocks, threads>>>(A_dev, B_dev, C_dev, modulus, N);
-        GPUNTT_CUDA_CHECK(cudaDeviceSynchronize());
-
-        GPUNTT_CUDA_CHECK(cudaMemcpy(C_host, C_dev, N * sizeof(TestDataTypeUint), cudaMemcpyDeviceToHost));
-
-        #if DEBUG == 1
-        cout << "[HOST] Result for modulus " << m << ": [ ";
-        for (size_t i = 0; i < N; ++i)
-            cout << C_host[i] << " ";
-        cout << "]" << endl;
-        #endif
-
-        GPUNTT_CUDA_CHECK(cudaFree(A_dev));
-        GPUNTT_CUDA_CHECK(cudaFree(B_dev));
-        GPUNTT_CUDA_CHECK(cudaFree(C_dev));
-    }
-}
-
-__host__ void gpu_ntt_inverse(vector<vector<TestDataTypeUint>> &c_mod, vector<vector<TestDataTypeUint>> &c_recovered) {
-    #if DEBUG == 1
-    cout << "Entering host side gpu_ntt_inverse function" << endl;
-    #endif
+    auto factors_for_N = generate_factors_for_N(logN);
+    auto t1 = chrono::high_resolution_clock::now();
+    durations.push_back(chrono::duration<double, milli>(t1 - t0).count());
+    labels.push_back("preprocessing");
 
     for (int i = 0; i < NUM_MODULI; i ++ ) {
-        // get the size of c_mod for logN in parameters
-        size_t N = c_mod[i].size();
-        if (N == 0) continue;
-        int logN = log2(static_cast<int>(N));
-
-        #if DEBUG == 1
-        cout << "[DEBUG] Input to INTT for modulus " << i << ": [ ";
-        for (size_t j = 0; j < min(N, (size_t)8); j++) {
-            cout << c_mod[i][j] << " ";
-        }
-        cout << "]" << endl;
-        #endif
-        
-        auto factors_for_N = generate_factors_for_N(logN);
-
-        NTTParameters parameters(logN, factors_for_N[i], ReductionPolynomial::X_N_minus);
-
-        #if DEBUG == 1
-        cout << "[DEBUG] n_inv for modulus " << i << " = " << parameters.n_inv << endl;
-        TestDataTypeUint128 check2 = (TestDataTypeUint128)16 * (TestDataTypeUint128)parameters.n_inv;
-        uint64_t result_mod = (uint64_t)(check2 % moduli[i]);
-        cout << "[VERIFY] 16 * n_inv mod " << moduli[i] << " = " << result_mod << " (should be 1)" << endl;
-        #endif
-
-        vector<TestDataType> c32(c_mod[i].begin(), c_mod[i].end());
-        
-        // CPU INTT
+        // CPU NTT
         #if DEBUG == 1
         NTTCPU<TestDataType> generator(parameters);
-        vector<TestDataType> cpu_intt_result = generator.intt(c32);
+        vector<TestDataType> cpu_ntt_result = generator.ntt(a32);
+        cout << "[CPU] Forward NTT result: [ ";
+        for (const auto& x : cpu_ntt_result)
+            cout << x << " ";
+        cout << "]" << endl;
+
+        vector<TestDataType> cpu_intt_result = generator.intt(cpu_ntt_result);
         cout << "[CPU] Inverse NTT result: [ ";
         for (const auto& x : cpu_intt_result)
             cout << x << " ";
         cout << "]" << endl;
         #endif
 
+        auto t2 = chrono::high_resolution_clock::now();
+        NTTParameters parameters(logN, factors_for_N[i], ReductionPolynomial::X_N_minus); // N is the length of the array you are sending in
+        auto t3 = chrono::high_resolution_clock::now();
+        durations.push_back(chrono::duration<double, milli>(t3 - t2).count());
+        labels.push_back("NTTParameters initialization");
+
         // input copying to the device
-        TestDataType* InOut_Datas;
-        GPUNTT_CUDA_CHECK(cudaMalloc(&InOut_Datas, parameters.n * sizeof(TestDataType)));
-        GPUNTT_CUDA_CHECK(cudaMemcpy(InOut_Datas, c32.data(), parameters.n * sizeof(TestDataType), cudaMemcpyHostToDevice));
+        auto t4 = chrono::high_resolution_clock::now();
+        GPUNTT_CUDA_CHECK(cudaMalloc(&a_InOut_Datas[i], parameters.n * sizeof(TestDataType)));
+        GPUNTT_CUDA_CHECK(cudaMemcpy(a_InOut_Datas[i], a32.data(), parameters.n * sizeof(TestDataType), cudaMemcpyHostToDevice));
+        GPUNTT_CUDA_CHECK(cudaMalloc(&b_InOut_Datas[i], parameters.n * sizeof(TestDataType)));
+        GPUNTT_CUDA_CHECK(cudaMemcpy(b_InOut_Datas[i], b32.data(), parameters.n * sizeof(TestDataType), cudaMemcpyHostToDevice));
+        auto t5 = chrono::high_resolution_clock::now();
+        durations.push_back(chrono::duration<double, milli>(t5 - t4).count());
+        labels.push_back("input copying to device");
+
+        // Forward omega table allocation + generation + copying to device
+        auto t6 = chrono::high_resolution_clock::now();
+        Root<TestDataType>* Forward_Omega_Table_Device;
+        GPUNTT_CUDA_CHECK(cudaMalloc(&Forward_Omega_Table_Device, parameters.root_of_unity_size * sizeof(Root<TestDataType>)));
+        vector<Root<TestDataType>> forward_omega_table = parameters.gpu_root_of_unity_table_generator(parameters.forward_root_of_unity_table);
+        auto t7 = chrono::high_resolution_clock::now();
+        durations.push_back(chrono::duration<double, milli>(t7 - t6).count());
+        labels.push_back("forward omega table alloc and generation");
+
+        #if DEBUG == 1
+        cout << "[GPU] Forward omega table values:" << endl;
+        for (size_t j = 0; j < forward_omega_table.size(); j++) {
+            cout << "  Omega[" << j << "] = " << static_cast<unsigned long long>(forward_omega_table[j]) << endl;
+        }
+        #endif
+
+        // copying forward omega table to device
+        GPUNTT_CUDA_CHECK(cudaDeviceSynchronize());
+        auto t8 = chrono::high_resolution_clock::now();
+        GPUNTT_CUDA_CHECK(cudaMemcpy(Forward_Omega_Table_Device, forward_omega_table.data(),
+                parameters.root_of_unity_size * sizeof(Root<TestDataType>), cudaMemcpyHostToDevice));
+        GPUNTT_CUDA_CHECK(cudaDeviceSynchronize());
+        auto t9 = chrono::high_resolution_clock::now();
+        durations.push_back(chrono::duration<double, milli>(t9 - t8).count());
+        labels.push_back("copying forward omega table to device");
+
+        // modulus copying to device
+        auto t10 = chrono::high_resolution_clock::now();
+        Modulus<TestDataType>* test_modulus;
+        GPUNTT_CUDA_CHECK(cudaMalloc(&test_modulus, sizeof(Modulus<TestDataType>)));
+        Modulus<TestDataType> test_modulus_[1] = {parameters.modulus};
+        GPUNTT_CUDA_CHECK(cudaMemcpy(test_modulus, test_modulus_, sizeof(Modulus<TestDataType>), cudaMemcpyHostToDevice));
+        auto t11 = chrono::high_resolution_clock::now();
+        durations.push_back(chrono::duration<double, milli>(t11 - t10).count());
+        labels.push_back("modulus copying to device");
+
+        GPUNTT_CUDA_CHECK(cudaDeviceSynchronize());
+        auto t12 = chrono::high_resolution_clock::now();
+        ntt_rns_configuration<TestDataType> cfg_ntt = {
+            .n_power = logN,
+            .ntt_type = FORWARD,
+            .ntt_layout = PerPolynomial,
+            .reduction_poly = ReductionPolynomial::X_N_minus,
+            .zero_padding = false,
+            .stream = 0};
+    
+        // launching kernel for gpu ntt in place
+        GPU_NTT_Inplace(a_InOut_Datas[i], Forward_Omega_Table_Device, test_modulus, cfg_ntt, BATCH, 1);
+        GPUNTT_CUDA_CHECK(cudaDeviceSynchronize());
+        GPU_NTT_Inplace(b_InOut_Datas[i], Forward_Omega_Table_Device, test_modulus, cfg_ntt, BATCH, 1);
+        GPUNTT_CUDA_CHECK(cudaDeviceSynchronize());
+        auto t13 = chrono::high_resolution_clock::now();
+        durations.push_back(chrono::duration<double, milli>(t13 - t12).count());
+        labels.push_back("GPU NTT inplace execution");
+
+        // copying output to host
+        #if DEBUG == 1
+        auto t14 = chrono::high_resolution_clock::now();
+        TestDataType* Output_Host;
+        Output_Host = (TestDataType*) malloc(parameters.n * sizeof(TestDataType));
+        GPUNTT_CUDA_CHECK(cudaMemcpy(Output_Host, a_InOut_Datas[i],
+                    parameters.n * sizeof(TestDataType),
+                    cudaMemcpyDeviceToHost));
+        auto t15 = chrono::high_resolution_clock::now();
+        durations.push_back(chrono::duration<double, milli>(t15 - t14).count());
+        labels.push_back("copying output to host");
+
+        cout << "[GPU] NTT output (device -> host): [ ";
+        for (long unsigned int j = 0; j < parameters.n; j++) {
+            cout << static_cast<unsigned long long>(Output_Host[j]) << " ";
+        }
+        cout << "]" << endl;
+
+        // Comparing GPU NTT results and CPU NTT results
+        bool check = true;
+        for (int j = 0; j < BATCH; j++)
+        {
+            check = check_result(Output_Host + (j * parameters.n),
+                                    cpu_ntt_result.data(), parameters.n);
+
+            if (!check)
+            {
+                cout << "(in " << j << ". Poly.)" << endl;
+                break;
+            }
+
+            if ((j == (BATCH - 1)) && check)
+            {
+                cout << "All Correct for PerPolynomial NTT." << endl;
+            }
+        }
+        #endif
+
+        cudaFree(Forward_Omega_Table_Device);
+        cudaFree(test_modulus); 
+    }
+
+    // pointwise multiplication on the gpu
+    #if DEBUG == 1
+    cout << "[HOST] Starting GPU pointwise multiplication" << endl;
+    #endif
+
+    for (size_t i = 0; i < NUM_MODULI; ++i) {
+        #if DEBUG == 1
+        cout << "[HOST] Processing modulus " << m << " (mod = " << moduli[i] << ")" << endl;
+        #endif
+
+        TestDataTypeUint modulus = moduli[i];
+
+        int threads = 256;
+        int blocks = (N + threads - 1) / threads;
+
+        cudaMalloc(&c_pointwise_mul[i], N * sizeof(TestDataType));
+
+        pointwise_mul_kernel<<<blocks, threads>>>(a_InOut_Datas[i], b_InOut_Datas[i], c_pointwise_mul[i], modulus, N);
+        GPUNTT_CUDA_CHECK(cudaDeviceSynchronize());
+    }
+
+    c_recovered.resize(NUM_MODULI);
+
+    // intt
+    #if DEBUG == 1
+    cout << "Entering host side gpu_ntt_inverse function" << endl;
+    #endif
+
+    for (int i = 0; i < NUM_MODULI; i ++ ) {
+        NTTParameters parameters(logN, factors_for_N[i], ReductionPolynomial::X_N_minus);
 
         // Inverse omega table allocation + generation + copying to device
         Root<TestDataType>* Inverse_Omega_Table_Device;
         GPUNTT_CUDA_CHECK(cudaMalloc(&Inverse_Omega_Table_Device, parameters.root_of_unity_size * sizeof(Root<TestDataType>)));
-        
-        #if DEBUG == 1
-        cout << "[DEBUG] root_of_unity_size = " << parameters.root_of_unity_size << endl;
-        #endif
-
         vector<Root<TestDataType>> inverse_omega_table = parameters.gpu_root_of_unity_table_generator(parameters.inverse_root_of_unity_table);
-
-        #if DEBUG == 1
-        cout << "[GPU] Inverse omega table values:" << endl;
-        for (size_t j = 0; j < inverse_omega_table.size(); j++) {
-            cout << "  Omega[" << j << "] = " << static_cast<unsigned long long>(inverse_omega_table[j]) << endl;
-        }
-        #endif
 
         GPUNTT_CUDA_CHECK(cudaMemcpy(Inverse_Omega_Table_Device, inverse_omega_table.data(),
             parameters.root_of_unity_size * sizeof(Root<TestDataType>), cudaMemcpyHostToDevice));
@@ -429,10 +323,6 @@ __host__ void gpu_ntt_inverse(vector<vector<TestDataTypeUint>> &c_mod, vector<ve
         Ninverse<TestDataType> test_ninverse_[1] = {parameters.n_inv};
         GPUNTT_CUDA_CHECK(cudaMemcpy(test_ninverse, test_ninverse_, sizeof(Ninverse<TestDataType>), cudaMemcpyHostToDevice));
 
-        #if DEBUG == 1
-        cout << "[DEBUG] N = " << N << ", logN = " << logN << endl;
-        #endif
-        
         ntt_rns_configuration<TestDataType> cfg_intt = {
             .n_power = logN,
             .ntt_type = INVERSE,
@@ -442,66 +332,30 @@ __host__ void gpu_ntt_inverse(vector<vector<TestDataTypeUint>> &c_mod, vector<ve
             .mod_inverse = test_ninverse,
             .stream = 0};
 
-        // output alloc + GPU INTT call
         TestDataType* Out_Datas;
         GPUNTT_CUDA_CHECK(cudaMalloc(&Out_Datas, parameters.n * sizeof(TestDataType)));
-        GPUNTT_CUDA_CHECK(cudaMemcpy(Out_Datas, c32.data(), parameters.n * sizeof(TestDataType), cudaMemcpyHostToDevice));
-        GPU_INTT(InOut_Datas, Out_Datas, Inverse_Omega_Table_Device, test_modulus, cfg_intt, BATCH, 1);
+        GPU_INTT(c_pointwise_mul[i], Out_Datas, Inverse_Omega_Table_Device, test_modulus, cfg_intt, BATCH, 1);
 
-        // copying output to host
-        TestDataType* Output_Host;
+        GPUNTT_CUDA_CHECK(cudaDeviceSynchronize());
 
-        Output_Host = (TestDataType*) malloc(parameters.n * sizeof(TestDataType));
-        GPUNTT_CUDA_CHECK(cudaMemcpy(Output_Host, Out_Datas, parameters.n * sizeof(TestDataType), cudaMemcpyDeviceToHost));
+        vector<TestDataType> host_result(parameters.n);
 
-        #if DEBUG == 1
-        cout << "[GPU] INTT output (device -> host): [ ";
-        for (long unsigned int j = 0; j < parameters.n; j++) {
-            cout << static_cast<unsigned long long>(Output_Host[j]) << " ";
-        }
-        cout << "]" << endl;
+        GPUNTT_CUDA_CHECK(cudaMemcpy(host_result.data(), Out_Datas, parameters.n * sizeof(TestDataType), cudaMemcpyDeviceToHost));
 
-        // Comparing GPU NTT results and CPU NTT results
-        bool check = true;
-        for (int j = 0; j < BATCH; j++)
-        {
-            check = check_result(Output_Host + (j * parameters.n),
-                                    cpu_intt_result.data(), parameters.n);
+        c_recovered[i].resize(parameters.n);
 
-            if (!check)
-            {
-                cout << "(in " << j << ". Poly.)" << endl;
-                break;
-            }
+        for (size_t j = 0; j < parameters.n; j++)
+            c_recovered[i][j] = static_cast<TestDataTypeUint>(host_result[j]);
 
-            if ((j == (BATCH - 1)) && check)
-            {
-                cout << "All Correct for PerPolynomial INTT." << endl;
-            }
-        }
-        #endif
+        cudaFree(Inverse_Omega_Table_Device);
+        cudaFree(test_modulus);
+        cudaFree(test_ninverse);
+        cudaFree(Out_Datas);
+    }
 
-        // copy Output_Host to c_recovered[i]
-        if (c_recovered.empty()) c_recovered.push_back(vector<TestDataTypeUint>());
-        
-        c_recovered.resize(NUM_MODULI);
-        c_recovered[i].clear();
-        c_recovered[i].reserve(parameters.n * 2);  // each data32 has two TestDataTypeUints? i'm not sure how the datatypes will work
-        
-        for (size_t j = 0; j < parameters.n; j++) {
-            TestDataTypeUint low  = static_cast<TestDataTypeUint>(Output_Host[j] & 0xFFFFFFFF);
-            c_recovered[i].push_back(low);
-        }
-
-        #if DEBUG == 1
-        cout << "[HOST] c_recovered[" << i << "] = [ ";
-        for (size_t k = 0; k < c_recovered[i].size(); k++)
-            cout << c_recovered[i][k] << " ";
-        cout << "]" << endl;
-        #endif
-
-        GPUNTT_CUDA_CHECK(cudaFree(InOut_Datas));
-        GPUNTT_CUDA_CHECK(cudaFree(Inverse_Omega_Table_Device));
-        free(Output_Host);
+    for (int i = 0; i < NUM_MODULI; i++) {
+        cudaFree(a_InOut_Datas[i]);
+        cudaFree(b_InOut_Datas[i]);
+        cudaFree(c_pointwise_mul[i]);
     }
 }
