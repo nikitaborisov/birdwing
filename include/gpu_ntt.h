@@ -1,12 +1,38 @@
 #pragma once
-#include <cstdint>
-#include <vector>
-#include <iostream>
+
+#include "ntt.cuh"
 #include "config.h"
+#include <vector>
 
 using namespace std;
+using namespace gpuntt;
 
-void ntt_multiply(vector<TestDataTypeUint> &a, vector<TestDataTypeUint> &b, vector<vector<TestDataTypeUint>> &c_recovered);
-void ntt_merge_forward(vector<TestDataTypeUint> &a, vector<vector<TestDataTypeUint>> &a_mod);
-void gpu_pointwise_multiply(const vector<vector<TestDataTypeUint>>& A_mod, const vector<vector<TestDataTypeUint>>& B_mod, vector<vector<TestDataTypeUint>>& C_mod);
-void gpu_ntt_inverse(vector<vector<TestDataTypeUint>> &c_mod, vector<vector<TestDataTypeUint>> &c_recovered);
+typedef Data32 TestDataType;
+
+struct NTTContext {
+    size_t N;
+    int logN;
+
+    vector<NTTParameters<TestDataType>> params;
+
+    vector<TestDataType*> a_dev;
+    vector<TestDataType*> b_dev;
+    vector<TestDataType*> c_dev;
+
+    vector<Root<TestDataType>*> forward_omega_dev;
+    vector<Root<TestDataType>*> inverse_omega_dev;
+
+    vector<Modulus<TestDataType>*> modulus_dev;
+    vector<Ninverse<TestDataType>*> ninv_dev;
+};
+
+NTTContext setup_ntt_context(size_t N);
+
+void execute_ntt_multiply(
+    NTTContext &ctx,
+    const vector<TestDataTypeUint> &a,
+    const vector<TestDataTypeUint> &b,
+    vector<vector<TestDataTypeUint>> &c_recovered
+);
+
+void cleanup_ntt_context(NTTContext &ctx);
