@@ -5,7 +5,6 @@
 #include <iostream>
 #include <vector>
 #include <cmath>
-#include <chrono>
 #include <fstream>
 #include <iomanip>
 #include <ctime>
@@ -127,8 +126,6 @@ __host__ void ntt_multiply(vector<TestDataTypeUint> &a, vector<TestDataTypeUint>
     vector<TestDataType*> b_InOut_Datas(NUM_MODULI);
     vector<TestDataType*> c_pointwise_mul(NUM_MODULI);
 
-    auto t0 = chrono::high_resolution_clock::now();
-
     // need to convert to compatible data type
     vector<TestDataType> a32(a.begin(), a.end());
     vector<TestDataType> b32(b.begin(), b.end());
@@ -138,9 +135,6 @@ __host__ void ntt_multiply(vector<TestDataTypeUint> &a, vector<TestDataTypeUint>
     int logN = log2(static_cast<int>(N));
 
     auto factors_for_N = generate_factors_for_N(logN);
-    auto t1 = chrono::high_resolution_clock::now();
-    durations.push_back(chrono::duration<double, milli>(t1 - t0).count());
-    labels.push_back("preprocessing");
 
     for (int i = 0; i < NUM_MODULI; i ++ ) {
         // CPU NTT
@@ -159,30 +153,19 @@ __host__ void ntt_multiply(vector<TestDataTypeUint> &a, vector<TestDataTypeUint>
         cout << "]" << endl;
         #endif
 
-        auto t2 = chrono::high_resolution_clock::now();
         NTTParameters parameters(logN, factors_for_N[i], ReductionPolynomial::X_N_minus); // N is the length of the array you are sending in
-        auto t3 = chrono::high_resolution_clock::now();
-        durations.push_back(chrono::duration<double, milli>(t3 - t2).count());
         labels.push_back("NTTParameters initialization");
 
         // input copying to the device
-        auto t4 = chrono::high_resolution_clock::now();
         GPUNTT_CUDA_CHECK(cudaMalloc(&a_InOut_Datas[i], parameters.n * sizeof(TestDataType)));
         GPUNTT_CUDA_CHECK(cudaMemcpy(a_InOut_Datas[i], a32.data(), parameters.n * sizeof(TestDataType), cudaMemcpyHostToDevice));
         GPUNTT_CUDA_CHECK(cudaMalloc(&b_InOut_Datas[i], parameters.n * sizeof(TestDataType)));
         GPUNTT_CUDA_CHECK(cudaMemcpy(b_InOut_Datas[i], b32.data(), parameters.n * sizeof(TestDataType), cudaMemcpyHostToDevice));
-        auto t5 = chrono::high_resolution_clock::now();
-        durations.push_back(chrono::duration<double, milli>(t5 - t4).count());
-        labels.push_back("input copying to device");
 
         // Forward omega table allocation + generation + copying to device
-        auto t6 = chrono::high_resolution_clock::now();
         Root<TestDataType>* Forward_Omega_Table_Device;
         GPUNTT_CUDA_CHECK(cudaMalloc(&Forward_Omega_Table_Device, parameters.root_of_unity_size * sizeof(Root<TestDataType>)));
         vector<Root<TestDataType>> forward_omega_table = parameters.gpu_root_of_unity_table_generator(parameters.forward_root_of_unity_table);
-        auto t7 = chrono::high_resolution_clock::now();
-        durations.push_back(chrono::duration<double, milli>(t7 - t6).count());
-        labels.push_back("forward omega table alloc and generation");
 
         #if DEBUG == 1
         cout << "[GPU] Forward omega table values:" << endl;
@@ -193,26 +176,17 @@ __host__ void ntt_multiply(vector<TestDataTypeUint> &a, vector<TestDataTypeUint>
 
         // copying forward omega table to device
         GPUNTT_CUDA_CHECK(cudaDeviceSynchronize());
-        auto t8 = chrono::high_resolution_clock::now();
         GPUNTT_CUDA_CHECK(cudaMemcpy(Forward_Omega_Table_Device, forward_omega_table.data(),
                 parameters.root_of_unity_size * sizeof(Root<TestDataType>), cudaMemcpyHostToDevice));
         GPUNTT_CUDA_CHECK(cudaDeviceSynchronize());
-        auto t9 = chrono::high_resolution_clock::now();
-        durations.push_back(chrono::duration<double, milli>(t9 - t8).count());
-        labels.push_back("copying forward omega table to device");
 
         // modulus copying to device
-        auto t10 = chrono::high_resolution_clock::now();
         Modulus<TestDataType>* test_modulus;
         GPUNTT_CUDA_CHECK(cudaMalloc(&test_modulus, sizeof(Modulus<TestDataType>)));
         Modulus<TestDataType> test_modulus_[1] = {parameters.modulus};
         GPUNTT_CUDA_CHECK(cudaMemcpy(test_modulus, test_modulus_, sizeof(Modulus<TestDataType>), cudaMemcpyHostToDevice));
-        auto t11 = chrono::high_resolution_clock::now();
-        durations.push_back(chrono::duration<double, milli>(t11 - t10).count());
-        labels.push_back("modulus copying to device");
 
         GPUNTT_CUDA_CHECK(cudaDeviceSynchronize());
-        auto t12 = chrono::high_resolution_clock::now();
         ntt_rns_configuration<TestDataType> cfg_ntt = {
             .n_power = logN,
             .ntt_type = FORWARD,
@@ -226,21 +200,14 @@ __host__ void ntt_multiply(vector<TestDataTypeUint> &a, vector<TestDataTypeUint>
         GPUNTT_CUDA_CHECK(cudaDeviceSynchronize());
         GPU_NTT_Inplace(b_InOut_Datas[i], Forward_Omega_Table_Device, test_modulus, cfg_ntt, BATCH, 1);
         GPUNTT_CUDA_CHECK(cudaDeviceSynchronize());
-        auto t13 = chrono::high_resolution_clock::now();
-        durations.push_back(chrono::duration<double, milli>(t13 - t12).count());
-        labels.push_back("GPU NTT inplace execution");
 
         // copying output to host
         #if DEBUG == 1
-        auto t14 = chrono::high_resolution_clock::now();
         TestDataType* Output_Host;
         Output_Host = (TestDataType*) malloc(parameters.n * sizeof(TestDataType));
         GPUNTT_CUDA_CHECK(cudaMemcpy(Output_Host, a_InOut_Datas[i],
                     parameters.n * sizeof(TestDataType),
                     cudaMemcpyDeviceToHost));
-        auto t15 = chrono::high_resolution_clock::now();
-        durations.push_back(chrono::duration<double, milli>(t15 - t14).count());
-        labels.push_back("copying output to host");
 
         cout << "[GPU] NTT output (device -> host): [ ";
         for (long unsigned int j = 0; j < parameters.n; j++) {
