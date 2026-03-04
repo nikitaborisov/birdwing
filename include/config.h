@@ -6,6 +6,7 @@
 #define BATCH 1
 
 #include <vector>
+#include <cstdint>
 
 typedef uint32_t TestDataTypeUint;
 typedef __uint128_t TestDataTypeUint128;

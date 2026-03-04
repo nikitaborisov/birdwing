@@ -121,8 +121,8 @@ vector<TestDataTypeUint> from_mpz(const mpz_t x, size_t expected_limbs)
     return out;
 }
 
-void limbs_to_mpz(mpz_t result, uint32_t *limbs, size_t n) {
-    mpz_import(result, n, -1, sizeof(uint32_t), 0, 0, limbs);
+void limbs_to_mpz(mpz_t result, TestDataTypeUint *limbs, size_t n) {
+    mpz_import(result, n, -1, sizeof(TestDataTypeUint), 0, 0, limbs);
 }
 
 vector<TestDataTypeUint> fast_from_mpz(mpz_t value, size_t expected_limbs)
@@ -134,7 +134,7 @@ vector<TestDataTypeUint> fast_from_mpz(mpz_t value, size_t expected_limbs)
         out.data(),     // destination buffer
         &count,         // actual number of limbs written
         -1,             // least significant limb first
-        sizeof(uint32_t),
+        sizeof(TestDataTypeUint), // size of each limb
         0,              // native endianness
         0,              // no nail bits
         value
@@ -244,6 +244,24 @@ void test_full_pipeline(size_t L)
         cout << RED_BOLD << "[FAIL] Pipeline incorrect\n" << RESET;
 }
 
+void test_simple() {
+    chrono::duration<double, milli> dur;
+    bool all_ok = true;
+    auto check = [&](const vector<TestDataTypeUint>& A,
+                     const vector<TestDataTypeUint>& B,
+                     const string& label) {
+        vector<TestDataTypeUint> C_gpu, C_ref;
+        host_multiply_merge(A, B, C_gpu, dur);
+        C_ref = cpu_schoolbook_mul(A, B);
+        bool ok = compare_vectors(C_gpu, C_ref);
+        cout << (ok ? GREEN_BOLD "[PASS] " : RED_BOLD "[FAIL] ") << label << RESET << "\n";
+        all_ok &= ok;
+    };
+
+    check({1, 0, 0, 0}, {1, 0, 0, 0}, "1 x 1");
+    check({0, 0, 0, 0}, {42, 0, 0, 0}, "0 x 42");
+}
+
 void test_identities(size_t L) {
     cout << YELLOW << "\n[Test] Identities, L = " << L << " limbs" << RESET << "\n";
     vector<TestDataTypeUint> Z(L, 0);
@@ -278,7 +296,7 @@ void benchmark_vs_gmp(size_t L)
     host_multiply_merge(A, B, warm, duration);
     C_gmp = gmp_mul(A, B);
 
-    const int ITERS = 1;
+    const int ITERS = 100;
     double gpu_time = 0.0, gmp_time = 0.0;
 
     for (int i = 0; i < ITERS; i++) {
@@ -309,6 +327,8 @@ int main()
 {
     cout << YELLOW << "==== FULL MULTIPLICATION PIPELINE TEST ====\n" << RESET;
 
+    test_simple();
+
     test_identities(1ULL << 20);
 
     test_full_pipeline(4);
@@ -319,6 +339,7 @@ int main()
     test_full_pipeline(128);
     test_full_pipeline(2048);
     test_full_pipeline(10000);
+    test_full_pipeline(1ULL << 15);
 
     benchmark_vs_gmp(4);
     benchmark_vs_gmp(256);

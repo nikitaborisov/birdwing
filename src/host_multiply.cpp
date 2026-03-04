@@ -1,8 +1,8 @@
-#include "../include/gpu_cgbn.h"
 #include "../include/gpu_ntt.h"
 #include "../include/multiply.h"
 #include "../include/crt.h"
 #include "../include/crt_utils.h"
+#include "../include/crt_gpu.h"
 #include "config.h"
 #include <chrono>
 #include <fstream>
@@ -55,27 +55,41 @@ void host_multiply_merge(const vector<TestDataTypeUint> &A, const vector<TestDat
     #endif
     
     auto t2 = chrono::high_resolution_clock::now();
-    vector<__uint128_t> C_big(N, 0);
+    vector<__uint128_t> C_big(N);
 
-    for (size_t i = 0; i < N; ++i) {
-        vector<TestDataTypeUint> residues(NUM_MODULI);
-        for (size_t j = 0; j < NUM_MODULI; ++j)
-            residues[j] = C_recovered[j][i];
+    if (N <= (1 << 10)) {
+        for (size_t i = 0; i < N; ++i) {
+            vector<TestDataTypeUint> residues(NUM_MODULI);
+            for (size_t j = 0; j < NUM_MODULI; ++j)
+                residues[j] = C_recovered[j][i];
 
-        // print the residues for coefficient i
-        #if DEBUG == 1
-        cout << "[Host] Coefficient " << i << " residues: ";
-        for (auto x : residues)
-            cout << x << " ";
-        cout << endl;
-        #endif
-        C_big[i] = crt_combine_many(moduli, residues); // reconstruct coefficient i
-        __uint128_t M = 1;
-        for (size_t j = 0; j < NUM_MODULI; ++j)
-            M *= moduli[j];
+            // print the residues for coefficient i
+            #if DEBUG == 1
+            cout << "[Host] Coefficient " << i << " residues: ";
+            for (auto x : residues)
+                cout << x << " ";
+            cout << endl;
+            #endif
+            C_big[i] = crt_combine_many(moduli, residues); // reconstruct coefficient i
+            __uint128_t M = 1;
+            for (size_t j = 0; j < NUM_MODULI; ++j)
+                M *= moduli[j];
 
-        if (C_big[i] > M/2)
-            C_big[i] -= M;
+            if (C_big[i] > M/2)
+                C_big[i] -= M;
+        }
+    } else {
+        CRTGarnerParams garner = compute_garner_params(moduli);
+        vector<uint64_t> C_hi, C_lo;
+        crt_combine_gpu(C_recovered, C_hi, C_lo, garner, N);
+
+        unsigned __int128 M = 1;
+        for (int j = 0; j < NUM_MODULI; j++) M *= moduli[j];
+
+        for (unsigned i = 0; i < N; i++) {
+            C_big[i] = ((unsigned __int128)C_hi[i] << 64) | C_lo[i];
+            if (C_big[i] > M / 2) C_big[i] -= M;
+        }
     }
 
     C.resize(L_C + 1, 0);
@@ -110,9 +124,24 @@ void host_multiply_merge(const vector<TestDataTypeUint> &A, const vector<TestDat
     auto t4 = chrono::high_resolution_clock::now();
 
     // print t1-t0, t3-t2
-    cout << "[Host] NTT multiply time: " << chrono::duration<double, milli>(t1 - t0).count() << " ms\n";
-    cout << "[Host] CRT combine time: " << chrono::duration<double, milli>(t3 - t2).count() << " ms\n";
-    cout << "[Host] Carry Prop time: " << chrono::duration<double, milli>(t4 - t3).count() << " ms\n";
+    // cout << "[Host] NTT multiply time: " << chrono::duration<double, milli>(t1 - t0).count() << " ms\n";
+    // cout << "[Host] CRT combine time: " << chrono::duration<double, milli>(t3 - t2).count() << " ms\n";
+    // cout << "[Host] Carry Prop time: " << chrono::duration<double, milli>(t4 - t3).count() << " ms\n";
+
+
+    std::ofstream csv("timings.csv", std::ios::app); // append mode
+
+    // Write header only if file is empty/new
+    if (csv.tellp() == 0) {
+        csv << "N,ntt_multiply_ms,crt_combine_ms,carry_prop_ms\n";
+    }
+
+    csv << N << "," 
+        << chrono::duration<double, milli>(t1 - t0).count() << ","
+        << chrono::duration<double, milli>(t3 - t2).count() << ","
+        << chrono::duration<double, milli>(t4 - t3).count() << "\n";
+
+    csv.close();
 
     duration = t1 - t0 + t3 - t2;
 }
