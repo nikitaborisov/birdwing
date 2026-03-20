@@ -322,31 +322,57 @@ void benchmark_vs_gmp(size_t L)
     cout << (ok ? GREEN_BOLD "[MATCH]\n" RESET : RED_BOLD "[MISMATCH]\n" RESET);
 }
 
+void profile_run(size_t L)
+{
+    vector<TestDataTypeUint> A = random_limbs(L, 1234);
+    vector<TestDataTypeUint> B = random_limbs(L, 5678);
+    vector<TestDataTypeUint> C;
+
+    chrono::duration<double, milli> duration;
+
+    // warmup
+    host_multiply_merge(A, B, C, duration);
+
+    // profile this run
+    host_multiply_merge(A, B, C, duration);
+}
+
 // ---------------- MAIN ----------------
 int main()
 {
-    cout << YELLOW << "==== FULL MULTIPLICATION PIPELINE TEST ====\n" << RESET;
+    #ifdef PROFILE
+    
+        cout << YELLOW << "==== PROFILE RUN ====\n" << RESET;
+        profile_run(1ULL << 20);
+        cout << YELLOW << "==== PROFILE COMPLETE ====\n" << RESET;
+        return 0;
+    
+    #else
 
-    test_simple();
+        cout << YELLOW << "==== FULL MULTIPLICATION PIPELINE TEST ====\n" << RESET;
 
-    test_identities(1ULL << 20);
+        test_simple();
 
-    test_full_pipeline(4);
-    test_full_pipeline(8);
-    test_full_pipeline(16);
-    test_full_pipeline(64);
+        test_identities(1ULL << 20);
 
-    test_full_pipeline(128);
-    test_full_pipeline(2048);
-    test_full_pipeline(10000);
-    test_full_pipeline(1ULL << 15);
+        test_full_pipeline(4);
+        test_full_pipeline(8);
+        test_full_pipeline(16);
+        test_full_pipeline(64);
 
-    benchmark_vs_gmp(4);
-    benchmark_vs_gmp(256);
-    benchmark_vs_gmp(1ULL << 12);
-    benchmark_vs_gmp(1ULL << 15);
-    benchmark_vs_gmp(1ULL << 20);
+        test_full_pipeline(128);
+        test_full_pipeline(2048);
+        test_full_pipeline(10000);
+        test_full_pipeline(1ULL << 15);
 
-    cout << YELLOW << "\n==== TEST COMPLETE ====\n" << RESET;
-    return 0;
+        benchmark_vs_gmp(4);
+        benchmark_vs_gmp(256);
+        benchmark_vs_gmp(1ULL << 12);
+        benchmark_vs_gmp(1ULL << 15);
+        benchmark_vs_gmp(1ULL << 20);
+
+        cout << YELLOW << "\n==== TEST COMPLETE ====\n" << RESET;
+        return 0;
+        
+    #endif
 }
