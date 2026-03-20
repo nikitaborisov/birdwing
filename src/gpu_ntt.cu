@@ -1,6 +1,5 @@
 #include "gpu_ntt.h"
 #include "modular_arith.cuh"
-#include "crt_gpu.h"
 #include "zero_pad.h"
 #include <cuda_runtime.h>
 #include <iostream>
@@ -85,7 +84,7 @@ __global__ void pointwise_mul_kernel(TestDataTypeUint* A,
     }
 }
 
-NTTContext setup_ntt_context(size_t N) {
+NTTContext setup_ntt_context(size_t N, size_t L_A, size_t L_B) {
     NTTContext ctx;
     ctx.N = N;
     ctx.logN = log2((int)N);
@@ -158,6 +157,17 @@ NTTContext setup_ntt_context(size_t N) {
     cudaMalloc(&ctx.d_C_hi, N * sizeof(uint64_t));
     cudaMalloc(&ctx.d_C_lo, N * sizeof(uint64_t));
 
+    // precompute garner params
+    ctx.garner = compute_garner_params(moduli);
+    upload_garner_params(ctx.garner);
+
+    upload_residue_ptrs(ctx.c_dev);
+
+    cudaMalloc(&ctx.a_raw_dev, L_A * sizeof(TestDataTypeUint));
+    cudaMalloc(&ctx.b_raw_dev, L_B * sizeof(TestDataTypeUint));
+    ctx.L_A = L_A;
+    ctx.L_B = L_B;
+
     cudaDeviceSynchronize();
     return ctx;
 }
@@ -169,21 +179,10 @@ void execute_ntt_multiply(
     vector<uint64_t> &C_hi,
     vector<uint64_t> &C_lo)
 {
-    cudaMalloc(&ctx.a_raw_dev, a.size() * sizeof(TestDataTypeUint));
-    cudaMalloc(&ctx.b_raw_dev, b.size() * sizeof(TestDataTypeUint));
-    ctx.L_A = a.size();
-    ctx.L_B = b.size();
-
     cudaMemcpy(ctx.a_raw_dev, a.data(), a.size() * sizeof(TestDataTypeUint), cudaMemcpyHostToDevice);
     cudaMemcpy(ctx.b_raw_dev, b.data(), b.size() * sizeof(TestDataTypeUint), cudaMemcpyHostToDevice);
 
-    // vector<TestDataType> a32(a.begin(), a.end());
-    // vector<TestDataType> b32(b.begin(), b.end());
-
     for (int i = 0; i < NUM_MODULI; i++) {
-
-        auto &p = ctx.params[i];
-
         zero_pad_gpu(ctx.a_raw_dev, ctx.a_dev[i], ctx.L_A, ctx.N);
         zero_pad_gpu(ctx.b_raw_dev, ctx.b_dev[i], ctx.L_B, ctx.N);
 
@@ -244,12 +243,8 @@ void execute_ntt_multiply(
     cudaDeviceSynchronize();
 
     // ctx.c_dev[i] holds INTT results — pass directly to CRT, no host round-trip
-    CRTGarnerParams garner = compute_garner_params(moduli);
-    crt_combine_gpu(ctx.c_dev, ctx.d_C_hi, ctx.d_C_lo, garner, ctx.N);
-
-    // only copy the final 128-bit result back, not the intermediate residues
-    C_hi.resize(ctx.N);
-    C_lo.resize(ctx.N);
+    crt_combine_gpu(ctx.d_C_hi, ctx.d_C_lo, ctx.N);
+    
     cudaMemcpy(C_hi.data(), ctx.d_C_hi, ctx.N * sizeof(uint64_t), cudaMemcpyDeviceToHost);
     cudaMemcpy(C_lo.data(), ctx.d_C_lo, ctx.N * sizeof(uint64_t), cudaMemcpyDeviceToHost);
 }

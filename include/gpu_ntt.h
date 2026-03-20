@@ -2,6 +2,7 @@
 
 #include "ntt.cuh"
 #include "config.h"
+#include "crt_gpu.h"
 #include <vector>
 
 using namespace std;
@@ -31,9 +32,11 @@ struct NTTContext {
 
     uint64_t* d_C_hi = nullptr;
     uint64_t* d_C_lo = nullptr;
+
+    CRTGarnerParams garner;
 };
 
-NTTContext setup_ntt_context(size_t N);
+NTTContext setup_ntt_context(size_t N, size_t L_A, size_t L_B);
 
 void execute_ntt_multiply(
     NTTContext &ctx,

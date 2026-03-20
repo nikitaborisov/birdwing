@@ -30,33 +30,23 @@ void host_multiply_merge(const vector<TestDataTypeUint> &A, const vector<TestDat
     while (N < L_C)
         N <<= 1;
 
-    vector<TestDataTypeUint> A_pad(N, 0), B_pad(N, 0);
-    copy(A.begin(), A.end(), A_pad.begin());
-    copy(B.begin(), B.end(), B_pad.begin());
-
-    vector<uint64_t> C_hi, C_lo;
-
-    NTTContext ctx = setup_ntt_context(N);
-
-    auto t0 = chrono::high_resolution_clock::now();
-    execute_ntt_multiply(ctx, A_pad, B_pad, C_hi, C_lo);
-    auto t1 = chrono::high_resolution_clock::now();
-
-    cleanup_ntt_context(ctx);
-    
-    auto t2 = chrono::high_resolution_clock::now();
+    vector<uint64_t> C_hi(N), C_lo(N);
     vector<__uint128_t> C_big(N);
+    C.resize(L_C + 1, 0);
 
     unsigned __int128 M = 1;
     for (int j = 0; j < NUM_MODULI; j++) M *= moduli[j];
+
+    NTTContext ctx = setup_ntt_context(N, L_A, L_B);
+
+    auto t0 = chrono::high_resolution_clock::now();
+    execute_ntt_multiply(ctx, A, B, C_hi, C_lo);
+    auto t1 = chrono::high_resolution_clock::now();
 
     for (size_t i = 0; i < N; i++) {
         C_big[i] = ((unsigned __int128)C_hi[i] << 64) | C_lo[i];
         if (C_big[i] > M / 2) C_big[i] -= M;
     }
-
-    C.resize(L_C + 1, 0);
-    auto t3 = chrono::high_resolution_clock::now();
 
     const __int128 BASE = (__int128)1 << 32;
     __int128 carry = 0;
@@ -77,34 +67,27 @@ void host_multiply_merge(const vector<TestDataTypeUint> &A, const vector<TestDat
     if (carry != 0)
         C[L_C] = (TestDataTypeUint)carry;
 
-    // trim
-    while (C.size() > 1 && C.back() == 0)
-        C.pop_back();
-
-    // pad to length L_C if needed
-    if (C.size() < (L_C + 1))
-        C.resize(L_C + 1, 0);
-    auto t4 = chrono::high_resolution_clock::now();
+    auto t2 = chrono::high_resolution_clock::now();
 
     // print t1-t0, t3-t2
     // cout << "[Host] NTT multiply time: " << chrono::duration<double, milli>(t1 - t0).count() << " ms\n";
     // cout << "[Host] CRT combine time: " << chrono::duration<double, milli>(t3 - t2).count() << " ms\n";
     // cout << "[Host] Carry Prop time: " << chrono::duration<double, milli>(t4 - t3).count() << " ms\n";
 
+    cleanup_ntt_context(ctx);
 
-    std::ofstream csv("timings.csv", std::ios::app); // append mode
+    std::ofstream csv("timings_new.csv", std::ios::app); // append mode
 
     // Write header only if file is empty/new
     if (csv.tellp() == 0) {
-        csv << "N,ntt_multiply_ms,crt_combine_ms,carry_prop_ms\n";
+        csv << "N,ntt_multiply_ms,carry_prop_ms\n";
     }
 
     csv << N << "," 
         << chrono::duration<double, milli>(t1 - t0).count() << ","
-        << chrono::duration<double, milli>(t3 - t2).count() << ","
-        << chrono::duration<double, milli>(t4 - t3).count() << "\n";
-
+        << chrono::duration<double, milli>(t2 - t1).count()
+        << "\n";
     csv.close();
 
-    duration = t1 - t0 + t3 - t2;
+    duration = t2 - t0;
 }

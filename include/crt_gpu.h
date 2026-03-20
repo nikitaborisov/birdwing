@@ -17,13 +17,15 @@ struct CRTGarnerParams {
 // Precompute Garner params from a list of primes (runs on host)
 CRTGarnerParams compute_garner_params(const vector<TestDataTypeUint> &primes);
 
+void upload_garner_params(const CRTGarnerParams &params);
+
+void upload_residue_ptrs(const vector<TestDataTypeUint*> &c_dev);
+
 // GPU CRT: combines residues for N coefficients in parallel.
 // residues layout: [NUM_MODULI][N] (row = modulus, col = coefficient index)
 // Output C_hi, C_lo: each coefficient x = (C_hi[i] << 64) | C_lo[i]
 void crt_combine_gpu(
-    const vector<TestDataTypeUint*> &d_residues_per_mod,  // ctx.c_dev
     uint64_t *d_C_hi,   // pre-allocated device output
     uint64_t *d_C_lo,
-    const CRTGarnerParams &params,
     int N
 );
