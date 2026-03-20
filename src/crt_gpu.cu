@@ -4,6 +4,8 @@
 #include <cassert>
 #include <cstdio>
 
+using namespace std;
+
 // Constant memory: Garner params visible to all threads
 __constant__ uint64_t d_primes[NUM_MODULI];
 __constant__ uint64_t d_inv[NUM_MODULI];
@@ -50,7 +52,7 @@ uint64_t mulmod64(uint64_t a, uint64_t b, uint64_t p) {
 // Kernel: one thread per coefficient
 __global__
 void crt_combine_kernel(
-    const TestDataTypeUint* __restrict__ residues,  // [NUM_MODULI * N]
+    TestDataTypeUint** __restrict__ residues,  // [NUM_MODULI * N]
     uint64_t* __restrict__ C_hi,
     uint64_t* __restrict__ C_lo,
     int N
@@ -63,9 +65,9 @@ void crt_combine_kernel(
 
     #pragma unroll
     for (int j = 0; j < NUM_MODULI; j++) {
-        uint64_t p   = d_primes[j];
-        uint64_t r   = (uint64_t)residues[j * N + i];   // residue for this coeff, this modulus
-        uint64_t inv = d_inv[j];
+        uint64_t p    = d_primes[j];
+        uint64_t r    = (uint64_t)residues[j][i];   // ← pointer-of-pointers access
+        uint64_t inv  = d_inv[j];
 
         // x_mod_p = current x mod p
         uint64_t x_mod_p = mod128(x_hi, x_lo, p);
@@ -107,9 +109,9 @@ CRTGarnerParams compute_garner_params(const vector<TestDataTypeUint> &primes) {
 
 // Host to launch CRT kernel
 void crt_combine_gpu(
-    const vector<vector<TestDataTypeUint>> &residues,
-    vector<uint64_t> &C_hi,
-    vector<uint64_t> &C_lo,
+    const vector<TestDataTypeUint*> &d_residues_per_mod,  // ctx.c_dev
+    uint64_t *d_C_hi,   // pre-allocated device output
+    uint64_t *d_C_lo,
     const CRTGarnerParams &params,
     int N
 ) {
@@ -118,36 +120,22 @@ void crt_combine_gpu(
     cudaMemcpyToSymbol(d_inv,      params.inv,      NUM_MODULI * sizeof(uint64_t));
     cudaMemcpyToSymbol(d_prefix_M, params.prefix_M, NUM_MODULI * sizeof(uint64_t));
 
-    // Flatten residues: [NUM_MODULI][N] -> single device array
-    size_t total = (size_t)NUM_MODULI * N;
-    std::vector<TestDataTypeUint> h_residues_flat(total);
+    // Build a flat device array in-place using a gather kernel, or
+    // change the CRT kernel to accept a pointer-array instead of flat memory.
+    // Option A (simpler): copy pointers and use indirect indexing in kernel.
+    TestDataTypeUint* d_ptrs_host[NUM_MODULI];
     for (int j = 0; j < NUM_MODULI; j++)
-        for (int i = 0; i < N; i++)
-            h_residues_flat[j * N + i] = residues[j][i];
+        d_ptrs_host[j] = d_residues_per_mod[j];
 
-    // Allocate device memory
-    TestDataTypeUint *d_residues;
-    uint64_t *d_C_hi, *d_C_lo;
-    cudaMalloc(&d_residues, total * sizeof(TestDataTypeUint));
-    cudaMalloc(&d_C_hi,     N * sizeof(uint64_t));
-    cudaMalloc(&d_C_lo,     N * sizeof(uint64_t));
+    TestDataTypeUint** d_ptrs;
+    cudaMalloc(&d_ptrs, NUM_MODULI * sizeof(TestDataTypeUint*));
+    cudaMemcpy(d_ptrs, d_ptrs_host, NUM_MODULI * sizeof(TestDataTypeUint*),
+               cudaMemcpyHostToDevice);
 
-    // Copy residues to device
-    cudaMemcpy(d_residues, h_residues_flat.data(), total * sizeof(TestDataTypeUint), cudaMemcpyHostToDevice);
-
-    // Launch
     int threads = 256;
     int blocks  = (N + threads - 1) / threads;
-    crt_combine_kernel<<<blocks, threads>>>(d_residues, d_C_hi, d_C_lo, N);
+    crt_combine_kernel<<<blocks, threads>>>(d_ptrs, d_C_hi, d_C_lo, N);
     cudaDeviceSynchronize();
 
-    // Copy results back
-    C_hi.resize(N);
-    C_lo.resize(N);
-    cudaMemcpy(C_hi.data(), d_C_hi, N * sizeof(uint64_t), cudaMemcpyDeviceToHost);
-    cudaMemcpy(C_lo.data(), d_C_lo, N * sizeof(uint64_t), cudaMemcpyDeviceToHost);
-
-    cudaFree(d_residues);
-    cudaFree(d_C_hi);
-    cudaFree(d_C_lo);
+    cudaFree(d_ptrs);
 }

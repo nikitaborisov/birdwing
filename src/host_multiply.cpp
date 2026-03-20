@@ -34,62 +34,25 @@ void host_multiply_merge(const vector<TestDataTypeUint> &A, const vector<TestDat
     copy(A.begin(), A.end(), A_pad.begin());
     copy(B.begin(), B.end(), B_pad.begin());
 
-    vector<vector<TestDataTypeUint>> C_recovered;
+    vector<uint64_t> C_hi, C_lo;
 
     NTTContext ctx = setup_ntt_context(N);
 
     auto t0 = chrono::high_resolution_clock::now();
-    execute_ntt_multiply(ctx, A_pad, B_pad, C_recovered);
+    execute_ntt_multiply(ctx, A_pad, B_pad, C_hi, C_lo);
     auto t1 = chrono::high_resolution_clock::now();
 
     cleanup_ntt_context(ctx);
-
-    #if DEBUG == 1
-    for (size_t j = 0; j < NUM_MODULI; ++j) {
-        cout << "[Host] Inverse NTT result mod " << moduli[j] << ": ";
-        for (size_t i = 0; i < N; ++i) {
-            cout << C_recovered[j][i] << " ";
-        }
-        cout << endl;
-    }
-    #endif
     
     auto t2 = chrono::high_resolution_clock::now();
     vector<__uint128_t> C_big(N);
 
-    if (N <= (1 << 10)) {
-        for (size_t i = 0; i < N; ++i) {
-            vector<TestDataTypeUint> residues(NUM_MODULI);
-            for (size_t j = 0; j < NUM_MODULI; ++j)
-                residues[j] = C_recovered[j][i];
+    unsigned __int128 M = 1;
+    for (int j = 0; j < NUM_MODULI; j++) M *= moduli[j];
 
-            // print the residues for coefficient i
-            #if DEBUG == 1
-            cout << "[Host] Coefficient " << i << " residues: ";
-            for (auto x : residues)
-                cout << x << " ";
-            cout << endl;
-            #endif
-            C_big[i] = crt_combine_many(moduli, residues); // reconstruct coefficient i
-            __uint128_t M = 1;
-            for (size_t j = 0; j < NUM_MODULI; ++j)
-                M *= moduli[j];
-
-            if (C_big[i] > M/2)
-                C_big[i] -= M;
-        }
-    } else {
-        CRTGarnerParams garner = compute_garner_params(moduli);
-        vector<uint64_t> C_hi, C_lo;
-        crt_combine_gpu(C_recovered, C_hi, C_lo, garner, N);
-
-        unsigned __int128 M = 1;
-        for (int j = 0; j < NUM_MODULI; j++) M *= moduli[j];
-
-        for (unsigned i = 0; i < N; i++) {
-            C_big[i] = ((unsigned __int128)C_hi[i] << 64) | C_lo[i];
-            if (C_big[i] > M / 2) C_big[i] -= M;
-        }
+    for (size_t i = 0; i < N; i++) {
+        C_big[i] = ((unsigned __int128)C_hi[i] << 64) | C_lo[i];
+        if (C_big[i] > M / 2) C_big[i] -= M;
     }
 
     C.resize(L_C + 1, 0);

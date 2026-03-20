@@ -24,6 +24,9 @@ struct NTTContext {
 
     vector<Modulus<TestDataType>*> modulus_dev;
     vector<Ninverse<TestDataType>*> ninv_dev;
+
+    uint64_t* d_C_hi = nullptr;
+    uint64_t* d_C_lo = nullptr;
 };
 
 NTTContext setup_ntt_context(size_t N);
@@ -32,7 +35,8 @@ void execute_ntt_multiply(
     NTTContext &ctx,
     const vector<TestDataTypeUint> &a,
     const vector<TestDataTypeUint> &b,
-    vector<vector<TestDataTypeUint>> &c_recovered
+    vector<uint64_t> &C_hi,
+    vector<uint64_t> &C_lo
 );
 
 void cleanup_ntt_context(NTTContext &ctx);
