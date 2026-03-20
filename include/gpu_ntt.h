@@ -15,6 +15,10 @@ struct NTTContext {
 
     vector<NTTParameters<TestDataType>> params;
 
+    TestDataTypeUint* a_raw_dev = nullptr;  // size L_A
+    TestDataTypeUint* b_raw_dev = nullptr;  // size L_B
+    size_t L_A = 0, L_B = 0;
+
     vector<TestDataType*> a_dev;
     vector<TestDataType*> b_dev;
     vector<TestDataType*> c_dev;

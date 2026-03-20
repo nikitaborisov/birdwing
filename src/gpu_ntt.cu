@@ -1,6 +1,7 @@
 #include "gpu_ntt.h"
 #include "modular_arith.cuh"
 #include "crt_gpu.h"
+#include "zero_pad.h"
 #include <cuda_runtime.h>
 #include <iostream>
 #include <vector>
@@ -168,20 +169,23 @@ void execute_ntt_multiply(
     vector<uint64_t> &C_hi,
     vector<uint64_t> &C_lo)
 {
-    vector<TestDataType> a32(a.begin(), a.end());
-    vector<TestDataType> b32(b.begin(), b.end());
+    cudaMalloc(&ctx.a_raw_dev, a.size() * sizeof(TestDataTypeUint));
+    cudaMalloc(&ctx.b_raw_dev, b.size() * sizeof(TestDataTypeUint));
+    ctx.L_A = a.size();
+    ctx.L_B = b.size();
+
+    cudaMemcpy(ctx.a_raw_dev, a.data(), a.size() * sizeof(TestDataTypeUint), cudaMemcpyHostToDevice);
+    cudaMemcpy(ctx.b_raw_dev, b.data(), b.size() * sizeof(TestDataTypeUint), cudaMemcpyHostToDevice);
+
+    // vector<TestDataType> a32(a.begin(), a.end());
+    // vector<TestDataType> b32(b.begin(), b.end());
 
     for (int i = 0; i < NUM_MODULI; i++) {
 
         auto &p = ctx.params[i];
 
-        cudaMemcpy(ctx.a_dev[i], a32.data(),
-                   p.n * sizeof(TestDataType),
-                   cudaMemcpyHostToDevice);
-
-        cudaMemcpy(ctx.b_dev[i], b32.data(),
-                   p.n * sizeof(TestDataType),
-                   cudaMemcpyHostToDevice);
+        zero_pad_gpu(ctx.a_raw_dev, ctx.a_dev[i], ctx.L_A, ctx.N);
+        zero_pad_gpu(ctx.b_raw_dev, ctx.b_dev[i], ctx.L_B, ctx.N);
 
         ntt_rns_configuration<TestDataType> cfg_fwd = {
             .n_power = ctx.logN,
@@ -262,4 +266,6 @@ void cleanup_ntt_context(NTTContext &ctx) {
     }
     cudaFree(ctx.d_C_hi);
     cudaFree(ctx.d_C_lo);
+    cudaFree(ctx.a_raw_dev);
+    cudaFree(ctx.b_raw_dev);
 }
