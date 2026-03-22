@@ -11,6 +11,7 @@ __constant__ uint64_t d_primes[NUM_MODULI];
 __constant__ uint64_t d_inv[NUM_MODULI];
 __constant__ uint64_t d_prefix_M[NUM_MODULI];
 __constant__ uint64_t d_M_mod_table[NUM_MODULI][NUM_MODULI];
+__constant__ uint64_t d_barrett_m[NUM_MODULI];
 
 __constant__ TestDataTypeUint* d_residue_ptrs[NUM_MODULI];
 
@@ -47,9 +48,17 @@ uint64_t mod128(uint64_t hi, uint64_t lo, uint64_t p) {
 }
 
 // (a * b) % p, safe via __uint128_t
+// __device__ __forceinline__
+// uint64_t mulmod64(uint64_t a, uint64_t b, uint64_t p) {
+//     return (uint64_t)((unsigned __int128)a * b % p);
+// }
+
 __device__ __forceinline__
-uint64_t mulmod64(uint64_t a, uint64_t b, uint64_t p) {
-    return (uint64_t)((unsigned __int128)a * b % p);
+uint64_t mulmod64(uint64_t a, uint64_t b, uint64_t p, uint64_t m) {
+    uint64_t prod = a * b;                   // exact: a,b < p < 2^32 so prod < 2^64
+    uint64_t q    = __umul64hi(prod, m);     // q ≈ floor(prod / p)
+    uint64_t r    = prod - q * p;
+    return r >= p ? r - p : r;
 }
 
 // Host to precompute Garner params
@@ -59,7 +68,11 @@ CRTGarnerParams compute_garner_params(const vector<TestDataTypeUint> &primes) {
 
     unsigned __int128 M = 1;
     for (int i = 0; i < NUM_MODULI; i++) {
+        assert((uint64_t)primes[i] < (1ULL << 32) &&
+           "Barrett mulmod32 requires primes < 2^32");
         uint64_t pi = (uint64_t)primes[i];
+        assert((pi - 1) <= (uint64_t)UINT32_MAX &&
+           "prime too large for 64-bit product");
         p.primes[i]   = pi;
         p.prefix_M[i] = (uint64_t)(M % pi);
         p.inv[i]      = (i == 0) ? 1ULL : modinv_u64(p.prefix_M[i], pi);
@@ -69,6 +82,7 @@ CRTGarnerParams compute_garner_params(const vector<TestDataTypeUint> &primes) {
             p.M_mod_table[k][i] = (uint64_t)(Mk % pi);  // M_k mod p_j
             Mk *= (unsigned __int128)primes[k];
         }
+        p.barrett_m[i] = (uint64_t)(((unsigned __int128)1 << 64) / (uint64_t)primes[i]);
 
         M *= pi;
     }
@@ -81,6 +95,7 @@ void upload_garner_params(const CRTGarnerParams &params) {
     cudaMemcpyToSymbol(d_inv,      params.inv,       NUM_MODULI * sizeof(uint64_t));
     cudaMemcpyToSymbol(d_prefix_M, params.prefix_M,  NUM_MODULI * sizeof(uint64_t));
     cudaMemcpyToSymbol(d_M_mod_table, params.M_mod_table, NUM_MODULI * NUM_MODULI * sizeof(uint64_t));
+    cudaMemcpyToSymbol(d_barrett_m, params.barrett_m, NUM_MODULI * sizeof(uint64_t));
 }
 
 void upload_residue_ptrs(const vector<TestDataTypeUint*> &c_dev) {
@@ -115,12 +130,12 @@ void crt_combine_kernel(uint64_t* __restrict__ C_hi, uint64_t* __restrict__ C_lo
         uint64_t t = (r >= x_mod_p) ? (r - x_mod_p) : (r + p - x_mod_p);
 
         // k_i = t * inv mod p
-        uint64_t k_i = mulmod64(t, inv, p);
+        uint64_t k_i = mulmod64(t, inv, p, d_barrett_m[j]);
 
         #pragma unroll
         for (int k = j + 1; k < NUM_MODULI; k++) {
             uint64_t pk      = d_primes[k];
-            uint64_t contrib = mulmod64(d_M_mod_table[j][k], k_i, pk);
+            uint64_t contrib = mulmod64(d_M_mod_table[j][k], k_i, pk, d_barrett_m[k]);
             x_mod[k] += contrib;
             if (x_mod[k] >= pk) x_mod[k] -= pk;   // single conditional, no division
         }

@@ -13,6 +13,7 @@ struct CRTGarnerParams {
     uint64_t inv[NUM_MODULI];      // inv[i] = inverse of (p0*...*p_{i-1}) mod p_i
     uint64_t prefix_M[NUM_MODULI]; // prefix_M[i] = (p0*...*p_{i-1}) mod p_i
     uint64_t M_mod_table[NUM_MODULI][NUM_MODULI];
+    uint64_t barrett_m[NUM_MODULI];
 };
 
 // Precompute Garner params from a list of primes (runs on host)
