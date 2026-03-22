@@ -10,6 +10,7 @@ using namespace std;
 __constant__ uint64_t d_primes[NUM_MODULI];
 __constant__ uint64_t d_inv[NUM_MODULI];
 __constant__ uint64_t d_prefix_M[NUM_MODULI];
+__constant__ uint64_t d_M_mod_table[NUM_MODULI][NUM_MODULI];
 
 __constant__ TestDataTypeUint* d_residue_ptrs[NUM_MODULI];
 
@@ -51,10 +52,35 @@ uint64_t mulmod64(uint64_t a, uint64_t b, uint64_t p) {
     return (uint64_t)((unsigned __int128)a * b % p);
 }
 
+// Host to precompute Garner params
+CRTGarnerParams compute_garner_params(const vector<TestDataTypeUint> &primes) {
+    assert(primes.size() == NUM_MODULI);
+    CRTGarnerParams p;
+
+    unsigned __int128 M = 1;
+    for (int i = 0; i < NUM_MODULI; i++) {
+        uint64_t pi = (uint64_t)primes[i];
+        p.primes[i]   = pi;
+        p.prefix_M[i] = (uint64_t)(M % pi);
+        p.inv[i]      = (i == 0) ? 1ULL : modinv_u64(p.prefix_M[i], pi);
+
+        unsigned __int128 Mk = 1;
+        for (int k = 0; k < NUM_MODULI; k++) {
+            p.M_mod_table[k][i] = (uint64_t)(Mk % pi);  // M_k mod p_j
+            Mk *= (unsigned __int128)primes[k];
+        }
+
+        M *= pi;
+    }
+    return p;
+}
+
+
 void upload_garner_params(const CRTGarnerParams &params) {
     cudaMemcpyToSymbol(d_primes,   params.primes,   NUM_MODULI * sizeof(uint64_t));
     cudaMemcpyToSymbol(d_inv,      params.inv,       NUM_MODULI * sizeof(uint64_t));
     cudaMemcpyToSymbol(d_prefix_M, params.prefix_M,  NUM_MODULI * sizeof(uint64_t));
+    cudaMemcpyToSymbol(d_M_mod_table, params.M_mod_table, NUM_MODULI * NUM_MODULI * sizeof(uint64_t));
 }
 
 void upload_residue_ptrs(const vector<TestDataTypeUint*> &c_dev) {
@@ -72,20 +98,32 @@ void crt_combine_kernel(uint64_t* __restrict__ C_hi, uint64_t* __restrict__ C_lo
     uint64_t x_hi = 0, x_lo = 0;   // running Garner solution
     uint64_t M_hi = 0, M_lo = 1;   // running prefix product, starts at 1
 
+    uint64_t x_mod[NUM_MODULI] = {};
+
     #pragma unroll
     for (int j = 0; j < NUM_MODULI; j++) {
         uint64_t p    = d_primes[j];
-        uint64_t r = (uint64_t)d_residue_ptrs[j][i];   // ← pointer-of-pointers access
+
+        // this is coalesced because for a fixed j, threads access consecutive i's
+        uint64_t r = (uint64_t)d_residue_ptrs[j][i];
         uint64_t inv  = d_inv[j];
 
         // x_mod_p = current x mod p
-        uint64_t x_mod_p = mod128(x_hi, x_lo, p);
+        uint64_t x_mod_p = x_mod[j];
 
         // t = (r - x_mod_p) mod p
         uint64_t t = (r >= x_mod_p) ? (r - x_mod_p) : (r + p - x_mod_p);
 
         // k_i = t * inv mod p
         uint64_t k_i = mulmod64(t, inv, p);
+
+        #pragma unroll
+        for (int k = j + 1; k < NUM_MODULI; k++) {
+            uint64_t pk      = d_primes[k];
+            uint64_t contrib = mulmod64(d_M_mod_table[j][k], k_i, pk);
+            x_mod[k] += contrib;
+            if (x_mod[k] >= pk) x_mod[k] -= pk;   // single conditional, no division
+        }
 
         // x += M * k_i
         uint64_t tmp_hi = M_hi, tmp_lo = M_lo;
@@ -98,22 +136,6 @@ void crt_combine_kernel(uint64_t* __restrict__ C_hi, uint64_t* __restrict__ C_lo
 
     C_hi[i] = x_hi;
     C_lo[i] = x_lo;
-}
-
-// Host to precompute Garner params
-CRTGarnerParams compute_garner_params(const vector<TestDataTypeUint> &primes) {
-    assert(primes.size() == NUM_MODULI);
-    CRTGarnerParams p;
-
-    unsigned __int128 M = 1;
-    for (int i = 0; i < NUM_MODULI; i++) {
-        uint64_t pi = (uint64_t)primes[i];
-        p.primes[i]   = pi;
-        p.prefix_M[i] = (uint64_t)(M % pi);
-        p.inv[i]      = (i == 0) ? 1ULL : modinv_u64(p.prefix_M[i], pi);
-        M *= pi;
-    }
-    return p;
 }
 
 // Host to launch CRT kernel
