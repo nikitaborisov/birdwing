@@ -37,9 +37,10 @@ void host_multiply_merge(const vector<TestDataTypeUint> &A, const vector<TestDat
     unsigned __int128 M = 1;
     for (int j = 0; j < NUM_MODULI; j++) M *= moduli[j];
 
-    NTTContext ctx = setup_ntt_context(N, L_A, L_B);
+    NTTPrecomputed pre = precompute_ntt(N);
 
     auto t0 = chrono::high_resolution_clock::now();
+    NTTContext ctx = allocate_ntt_context(pre, L_A, L_B);
     execute_ntt_multiply(ctx, A, B, C_hi, C_lo);
     auto t1 = chrono::high_resolution_clock::now();
 
@@ -67,14 +68,15 @@ void host_multiply_merge(const vector<TestDataTypeUint> &A, const vector<TestDat
     if (carry != 0)
         C[L_C] = (TestDataTypeUint)carry;
 
+    cleanup_ntt_context(ctx);
     auto t2 = chrono::high_resolution_clock::now();
+
+    cleanup_ntt_precomputed(pre);
 
     // print t1-t0, t3-t2
     // cout << "[Host] NTT multiply time: " << chrono::duration<double, milli>(t1 - t0).count() << " ms\n";
     // cout << "[Host] CRT combine time: " << chrono::duration<double, milli>(t3 - t2).count() << " ms\n";
     // cout << "[Host] Carry Prop time: " << chrono::duration<double, milli>(t4 - t3).count() << " ms\n";
-
-    cleanup_ntt_context(ctx);
 
     std::ofstream csv("timings_new.csv", std::ios::app); // append mode
 

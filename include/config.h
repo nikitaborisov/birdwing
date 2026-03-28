@@ -9,6 +9,7 @@
 #include <cstdint>
 
 typedef uint32_t TestDataTypeUint;
+typedef uint64_t TestDataTypeTwice;
 typedef __uint128_t TestDataTypeUint128;
 
 extern std::vector<TestDataTypeUint> moduli;

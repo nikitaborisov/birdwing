@@ -84,89 +84,95 @@ __global__ void pointwise_mul_kernel(TestDataTypeUint* A,
     }
 }
 
-NTTContext setup_ntt_context(size_t N, size_t L_A, size_t L_B) {
+NTTPrecomputed precompute_ntt(size_t N) {
+    NTTPrecomputed pre;
+    pre.N    = N;
+    pre.logN = (int)log2((double)N);
+
+    pre.params.resize(NUM_MODULI);
+    pre.forward_omega_dev.resize(NUM_MODULI);
+    pre.inverse_omega_dev.resize(NUM_MODULI);
+    pre.modulus_dev.resize(NUM_MODULI);
+    pre.ninv_dev.resize(NUM_MODULI);
+
+    auto factors = generate_factors_for_N(pre.logN);
+
+    for (int i = 0; i < NUM_MODULI; i++) {
+        pre.params[i] = NTTParameters<TestDataType>(
+            pre.logN, factors[i], ReductionPolynomial::X_N_minus);
+        auto &p = pre.params[i];
+
+        // forward omega
+        auto fwd = p.gpu_root_of_unity_table_generator(p.forward_root_of_unity_table);
+        cudaMalloc(&pre.forward_omega_dev[i],
+                   p.root_of_unity_size * sizeof(Root<TestDataType>));
+        cudaMemcpy(pre.forward_omega_dev[i], fwd.data(),
+                   p.root_of_unity_size * sizeof(Root<TestDataType>),
+                   cudaMemcpyHostToDevice);
+
+        // inverse omega
+        auto inv = p.gpu_root_of_unity_table_generator(p.inverse_root_of_unity_table);
+        cudaMalloc(&pre.inverse_omega_dev[i],
+                   p.root_of_unity_size * sizeof(Root<TestDataType>));
+        cudaMemcpy(pre.inverse_omega_dev[i], inv.data(),
+                   p.root_of_unity_size * sizeof(Root<TestDataType>),
+                   cudaMemcpyHostToDevice);
+
+        // modulus
+        cudaMalloc(&pre.modulus_dev[i], sizeof(Modulus<TestDataType>));
+        Modulus<TestDataType> mod_host[1] = {p.modulus};
+        cudaMemcpy(pre.modulus_dev[i], mod_host,
+                   sizeof(Modulus<TestDataType>), cudaMemcpyHostToDevice);
+
+        // n inverse
+        cudaMalloc(&pre.ninv_dev[i], sizeof(Ninverse<TestDataType>));
+        Ninverse<TestDataType> ninv_host[1] = {p.n_inv};
+        cudaMemcpy(pre.ninv_dev[i], ninv_host,
+                   sizeof(Ninverse<TestDataType>), cudaMemcpyHostToDevice);
+    }
+
+    pre.garner = compute_garner_params(moduli);
+    upload_garner_params(pre.garner);
+
+    cudaDeviceSynchronize();
+    return pre;
+}
+
+// now allocate only owns the mutable buffers
+NTTContext allocate_ntt_context(const NTTPrecomputed &pre, size_t L_A, size_t L_B) {
     NTTContext ctx;
-    ctx.N = N;
-    ctx.logN = log2((int)N);
+    ctx.N    = pre.N;
+    ctx.logN = pre.logN;
+    ctx.L_A  = L_A;
+    ctx.L_B  = L_B;
+    ctx.garner = pre.garner;
 
     ctx.params.resize(NUM_MODULI);
     ctx.a_dev.resize(NUM_MODULI);
     ctx.b_dev.resize(NUM_MODULI);
     ctx.c_dev.resize(NUM_MODULI);
-    ctx.forward_omega_dev.resize(NUM_MODULI);
-    ctx.inverse_omega_dev.resize(NUM_MODULI);
-    ctx.modulus_dev.resize(NUM_MODULI);
-    ctx.ninv_dev.resize(NUM_MODULI);
 
-    auto factors = generate_factors_for_N(ctx.logN);
+    // borrow read-only pointers — no copy, no new allocation
+    ctx.forward_omega_dev = pre.forward_omega_dev;
+    ctx.inverse_omega_dev = pre.inverse_omega_dev;
+    ctx.modulus_dev       = pre.modulus_dev;
+    ctx.ninv_dev          = pre.ninv_dev;
 
     for (int i = 0; i < NUM_MODULI; i++) {
+        ctx.params[i] = pre.params[i];
+        const auto &p = ctx.params[i];
 
-        ctx.params[i] =
-        NTTParameters<TestDataType>(
-            ctx.logN,
-            factors[i],
-            ReductionPolynomial::X_N_minus);
-
-        auto &p = ctx.params[i];
-
-        // allocate data buffers
         cudaMalloc(&ctx.a_dev[i], p.n * sizeof(TestDataType));
         cudaMalloc(&ctx.b_dev[i], p.n * sizeof(TestDataType));
         cudaMalloc(&ctx.c_dev[i], p.n * sizeof(TestDataType));
-
-        // forward omega
-        cudaMalloc(&ctx.forward_omega_dev[i],
-                   p.root_of_unity_size * sizeof(Root<TestDataType>));
-
-        auto forward_table =
-            p.gpu_root_of_unity_table_generator(p.forward_root_of_unity_table);
-
-        cudaMemcpy(ctx.forward_omega_dev[i],
-                   forward_table.data(),
-                   p.root_of_unity_size * sizeof(Root<TestDataType>),
-                   cudaMemcpyHostToDevice);
-
-        // inverse omega
-        cudaMalloc(&ctx.inverse_omega_dev[i],
-                   p.root_of_unity_size * sizeof(Root<TestDataType>));
-
-        auto inverse_table =
-            p.gpu_root_of_unity_table_generator(p.inverse_root_of_unity_table);
-
-        cudaMemcpy(ctx.inverse_omega_dev[i],
-                   inverse_table.data(),
-                   p.root_of_unity_size * sizeof(Root<TestDataType>),
-                   cudaMemcpyHostToDevice);
-
-        // modulus
-        cudaMalloc(&ctx.modulus_dev[i], sizeof(Modulus<TestDataType>));
-        Modulus<TestDataType> mod_host[1] = {p.modulus};
-        cudaMemcpy(ctx.modulus_dev[i], mod_host,
-                   sizeof(Modulus<TestDataType>),
-                   cudaMemcpyHostToDevice);
-
-        // n inverse
-        cudaMalloc(&ctx.ninv_dev[i], sizeof(Ninverse<TestDataType>));
-        Ninverse<TestDataType> ninv_host[1] = {p.n_inv};
-        cudaMemcpy(ctx.ninv_dev[i], ninv_host,
-                   sizeof(Ninverse<TestDataType>),
-                   cudaMemcpyHostToDevice);
     }
 
-    cudaMalloc(&ctx.d_C_hi, N * sizeof(uint64_t));
-    cudaMalloc(&ctx.d_C_lo, N * sizeof(uint64_t));
-
-    // precompute garner params
-    ctx.garner = compute_garner_params(moduli);
-    upload_garner_params(ctx.garner);
-
-    upload_residue_ptrs(ctx.c_dev);
-
+    cudaMalloc(&ctx.d_C_hi, pre.N * sizeof(uint64_t));
+    cudaMalloc(&ctx.d_C_lo, pre.N * sizeof(uint64_t));
     cudaMalloc(&ctx.a_raw_dev, L_A * sizeof(TestDataTypeUint));
     cudaMalloc(&ctx.b_raw_dev, L_B * sizeof(TestDataTypeUint));
-    ctx.L_A = L_A;
-    ctx.L_B = L_B;
+
+    upload_residue_ptrs(ctx.c_dev);
 
     cudaDeviceSynchronize();
     return ctx;
@@ -254,13 +260,18 @@ void cleanup_ntt_context(NTTContext &ctx) {
         cudaFree(ctx.a_dev[i]);
         cudaFree(ctx.b_dev[i]);
         cudaFree(ctx.c_dev[i]);
-        cudaFree(ctx.forward_omega_dev[i]);
-        cudaFree(ctx.inverse_omega_dev[i]);
-        cudaFree(ctx.modulus_dev[i]);
-        cudaFree(ctx.ninv_dev[i]);
     }
     cudaFree(ctx.d_C_hi);
     cudaFree(ctx.d_C_lo);
     cudaFree(ctx.a_raw_dev);
     cudaFree(ctx.b_raw_dev);
+}
+
+void cleanup_ntt_precomputed(NTTPrecomputed &pre) {
+    for (int i = 0; i < NUM_MODULI; i++) {
+        cudaFree(pre.forward_omega_dev[i]);
+        cudaFree(pre.inverse_omega_dev[i]);
+        cudaFree(pre.modulus_dev[i]);
+        cudaFree(pre.ninv_dev[i]);
+    }
 }

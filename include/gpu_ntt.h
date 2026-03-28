@@ -36,7 +36,19 @@ struct NTTContext {
     CRTGarnerParams garner;
 };
 
-NTTContext setup_ntt_context(size_t N, size_t L_A, size_t L_B);
+struct NTTPrecomputed {
+    size_t N;
+    int logN;
+    vector<NTTParameters<TestDataType>> params;
+    vector<Root<TestDataType>*>     forward_omega_dev;
+    vector<Root<TestDataType>*>     inverse_omega_dev;
+    vector<Modulus<TestDataType>*>  modulus_dev;
+    vector<Ninverse<TestDataType>*> ninv_dev;
+    CRTGarnerParams garner;
+};
+
+NTTPrecomputed precompute_ntt(size_t N);
+NTTContext allocate_ntt_context(const NTTPrecomputed &pre, size_t L_A, size_t L_B);
 
 void execute_ntt_multiply(
     NTTContext &ctx,
@@ -47,3 +59,4 @@ void execute_ntt_multiply(
 );
 
 void cleanup_ntt_context(NTTContext &ctx);
+void cleanup_ntt_precomputed(NTTPrecomputed &pre);
