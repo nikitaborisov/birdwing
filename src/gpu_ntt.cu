@@ -145,9 +145,7 @@ NTTContext allocate_ntt_context(const NTTPrecomputed &pre, size_t L_A, size_t L_
     ctx.logN = pre.logN;
     ctx.L_A  = L_A;
     ctx.L_B  = L_B;
-    ctx.garner = pre.garner;
 
-    ctx.params.resize(NUM_MODULI);
     ctx.a_dev.resize(NUM_MODULI);
     ctx.b_dev.resize(NUM_MODULI);
     ctx.c_dev.resize(NUM_MODULI);
@@ -159,8 +157,7 @@ NTTContext allocate_ntt_context(const NTTPrecomputed &pre, size_t L_A, size_t L_
     ctx.ninv_dev          = pre.ninv_dev;
 
     for (int i = 0; i < NUM_MODULI; i++) {
-        ctx.params[i] = pre.params[i];
-        const auto &p = ctx.params[i];
+        const auto &p = pre.params[i];
 
         cudaMalloc(&ctx.a_dev[i], p.n * sizeof(TestDataType));
         cudaMalloc(&ctx.b_dev[i], p.n * sizeof(TestDataType));
@@ -172,6 +169,9 @@ NTTContext allocate_ntt_context(const NTTPrecomputed &pre, size_t L_A, size_t L_
     cudaMalloc(&ctx.a_raw_dev, L_A * sizeof(TestDataTypeUint));
     cudaMalloc(&ctx.b_raw_dev, L_B * sizeof(TestDataTypeUint));
 
+    cudaStreamCreate(&ctx.stream_a);
+    cudaStreamCreate(&ctx.stream_b);
+
     upload_residue_ptrs(ctx.c_dev);
 
     cudaDeviceSynchronize();
@@ -180,54 +180,54 @@ NTTContext allocate_ntt_context(const NTTPrecomputed &pre, size_t L_A, size_t L_
 
 void execute_ntt_multiply(
     NTTContext &ctx,
-    const vector<TestDataTypeUint> &a,
-    const vector<TestDataTypeUint> &b,
+    const TestDataTypeUint* a_pinned,
+    const TestDataTypeUint* b_pinned,
     vector<uint64_t> &C_hi,
     vector<uint64_t> &C_lo)
 {
-    cudaMemcpy(ctx.a_raw_dev, a.data(), a.size() * sizeof(TestDataTypeUint), cudaMemcpyHostToDevice);
-    cudaMemcpy(ctx.b_raw_dev, b.data(), b.size() * sizeof(TestDataTypeUint), cudaMemcpyHostToDevice);
+    cudaMemcpyAsync(ctx.a_raw_dev, a_pinned,
+                ctx.L_A * sizeof(TestDataTypeUint),
+                cudaMemcpyHostToDevice, ctx.stream_a);
+    cudaMemcpyAsync(ctx.b_raw_dev, b_pinned,
+                ctx.L_B * sizeof(TestDataTypeUint),
+                cudaMemcpyHostToDevice, ctx.stream_b);
 
     for (int i = 0; i < NUM_MODULI; i++) {
-        zero_pad_gpu(ctx.a_raw_dev, ctx.a_dev[i], ctx.L_A, ctx.N);
-        zero_pad_gpu(ctx.b_raw_dev, ctx.b_dev[i], ctx.L_B, ctx.N);
-
-        ntt_rns_configuration<TestDataType> cfg_fwd = {
+        ntt_rns_configuration<TestDataType> cfg_a = {
             .n_power = ctx.logN,
             .ntt_type = FORWARD,
             .ntt_layout = PerPolynomial,
             .reduction_poly = ReductionPolynomial::X_N_minus,
             .zero_padding = false,
-            .stream = 0
+            .stream = ctx.stream_a
         };
+        ntt_rns_configuration<TestDataType> cfg_b = {
+            .n_power = ctx.logN,
+            .ntt_type = FORWARD,
+            .ntt_layout = PerPolynomial,
+            .reduction_poly = ReductionPolynomial::X_N_minus,
+            .zero_padding = false,
+            .stream = ctx.stream_b
+        };
+        zero_pad_gpu(a_pinned, ctx.a_dev[i], ctx.L_A, ctx.N, ctx.stream_a);
+        GPU_NTT_Inplace(ctx.a_dev[i], ctx.forward_omega_dev[i],
+                        ctx.modulus_dev[i], cfg_a, BATCH, 1);
 
-        GPU_NTT_Inplace(ctx.a_dev[i],
-                        ctx.forward_omega_dev[i],
-                        ctx.modulus_dev[i],
-                        cfg_fwd,
-                        BATCH, 1);
+        zero_pad_gpu(b_pinned, ctx.b_dev[i], ctx.L_B, ctx.N, ctx.stream_b);
+        GPU_NTT_Inplace(ctx.b_dev[i], ctx.forward_omega_dev[i],
+                        ctx.modulus_dev[i], cfg_b, BATCH, 1);
 
-        GPU_NTT_Inplace(ctx.b_dev[i],
-                        ctx.forward_omega_dev[i],
-                        ctx.modulus_dev[i],
-                        cfg_fwd,
-                        BATCH, 1);
+        cudaStreamSynchronize(ctx.stream_a);
+        cudaStreamSynchronize(ctx.stream_b);
 
-        // pointwise
         int threads = 256;
         int blocks = (ctx.N + threads - 1) / threads;
-
-        pointwise_mul_kernel<<<blocks, threads>>>(
-            ctx.a_dev[i],
-            ctx.b_dev[i],
-            ctx.c_dev[i],
-            moduli[i],
-            ctx.N);
+        pointwise_mul_kernel<<<blocks, threads, 0, ctx.stream_a>>>(
+            ctx.a_dev[i], ctx.b_dev[i], ctx.c_dev[i], moduli[i], ctx.N);
     }
 
     // inverse
     for (int i = 0; i < NUM_MODULI; i++) {
-
         ntt_rns_configuration<TestDataType> cfg_inv = {
             .n_power = ctx.logN,
             .ntt_type = INVERSE,
@@ -235,7 +235,7 @@ void execute_ntt_multiply(
             .reduction_poly = ReductionPolynomial::X_N_minus,
             .zero_padding = false,
             .mod_inverse = ctx.ninv_dev[i],
-            .stream = 0
+            .stream = ctx.stream_a
         };
 
         GPU_INTT(ctx.c_dev[i],
@@ -246,7 +246,7 @@ void execute_ntt_multiply(
                  BATCH, 1);
     }
 
-    cudaDeviceSynchronize();
+    cudaStreamSynchronize(ctx.stream_a);
 
     // ctx.c_dev[i] holds INTT results — pass directly to CRT, no host round-trip
     crt_combine_gpu(ctx.d_C_hi, ctx.d_C_lo, ctx.N);
@@ -261,6 +261,8 @@ void cleanup_ntt_context(NTTContext &ctx) {
         cudaFree(ctx.b_dev[i]);
         cudaFree(ctx.c_dev[i]);
     }
+    cudaStreamDestroy(ctx.stream_a);
+    cudaStreamDestroy(ctx.stream_b);
     cudaFree(ctx.d_C_hi);
     cudaFree(ctx.d_C_lo);
     cudaFree(ctx.a_raw_dev);

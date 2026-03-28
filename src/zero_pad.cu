@@ -15,9 +15,10 @@ void zero_pad_gpu(
     const TestDataTypeUint* d_src,
     TestDataTypeUint* d_dst,
     size_t L,
-    size_t N
+    size_t N,
+    cudaStream_t stream
 ) {
     int threads_per_block = 256;
     int blocks = (N + threads_per_block - 1) / threads_per_block;
-    zero_pad_kernel<<<blocks, threads_per_block>>>(d_src, d_dst, L, N);
+    zero_pad_kernel<<<blocks, threads_per_block, 0, stream>>>(d_src, d_dst, L, N);
 }

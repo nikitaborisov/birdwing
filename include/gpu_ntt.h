@@ -14,8 +14,6 @@ struct NTTContext {
     size_t N;
     int logN;
 
-    vector<NTTParameters<TestDataType>> params;
-
     TestDataTypeUint* a_raw_dev = nullptr;  // size L_A
     TestDataTypeUint* b_raw_dev = nullptr;  // size L_B
     size_t L_A = 0, L_B = 0;
@@ -30,10 +28,10 @@ struct NTTContext {
     vector<Modulus<TestDataType>*> modulus_dev;
     vector<Ninverse<TestDataType>*> ninv_dev;
 
+    cudaStream_t stream_a, stream_b;
+
     uint64_t* d_C_hi = nullptr;
     uint64_t* d_C_lo = nullptr;
-
-    CRTGarnerParams garner;
 };
 
 struct NTTPrecomputed {
@@ -52,8 +50,8 @@ NTTContext allocate_ntt_context(const NTTPrecomputed &pre, size_t L_A, size_t L_
 
 void execute_ntt_multiply(
     NTTContext &ctx,
-    const vector<TestDataTypeUint> &a,
-    const vector<TestDataTypeUint> &b,
+    const TestDataTypeUint* a_pinned,
+    const TestDataTypeUint* b_pinned,
     vector<uint64_t> &C_hi,
     vector<uint64_t> &C_lo
 );
