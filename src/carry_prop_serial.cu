@@ -25,10 +25,10 @@ __global__ void carry_intra_segment_kernel(
         if (val > (__int128)(M / 2)) val -= (__int128)M;
 
         __int128 temp = val + carry;
-        __int128 limb = temp % BASE;
+        uint32_t limb = (uint32_t)(temp & 0xFFFFFFFFULL);
         if (limb < 0) { limb += BASE; temp -= BASE; }
         out[i] = (uint32_t)limb;
-        carry  = (temp - limb) / BASE;
+        carry = temp >> 32;
     }
     seg_carry[blockIdx.x] = (int64_t)carry;
 }
