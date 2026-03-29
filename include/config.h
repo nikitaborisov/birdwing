@@ -5,6 +5,8 @@
 #define NUM_MODULI 3
 #define BATCH 1
 
+#define CARRY_SEG 1024
+
 #include <vector>
 #include <cstdint>
 

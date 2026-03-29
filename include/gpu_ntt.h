@@ -34,6 +34,7 @@ struct NTTContext {
     uint64_t* d_C_hi;
     uint64_t* d_C_lo;
     uint32_t* d_out;
+    int64_t*  d_seg_carry;
 };
 
 struct NTTPrecomputed {

@@ -1,6 +1,7 @@
 #include "gpu_ntt.h"
 #include "modular_arith.cuh"
 #include "zero_pad.h"
+#include "carry_prop_serial.h"
 #include <cuda_runtime.h>
 #include <iostream>
 #include <vector>
@@ -168,7 +169,9 @@ NTTContext allocate_ntt_context(const NTTPrecomputed &pre, size_t L_A, size_t L_
     cudaMalloc(&ctx.b_raw_dev, L_B * sizeof(TestDataTypeUint));
     cudaMalloc(&ctx.d_C_hi, pre.N * sizeof(uint64_t));
     cudaMalloc(&ctx.d_C_lo, pre.N * sizeof(uint64_t));
-    cudaMalloc(&ctx.d_out,  (pre.N + 1) * sizeof(uint32_t));  // ADD THIS
+    cudaMalloc(&ctx.d_out,  (pre.N + 1) * sizeof(uint32_t));
+    size_t num_segs = (pre.N + CARRY_SEG - 1) / CARRY_SEG;
+    cudaMalloc(&ctx.d_seg_carry, num_segs * sizeof(int64_t));
 
     cudaStreamCreate(&ctx.stream_a);
     cudaStreamCreate(&ctx.stream_b);
@@ -254,8 +257,16 @@ void execute_ntt_multiply(
     unsigned __int128 M = 1;
     for (int j = 0; j < NUM_MODULI; j++) M *= moduli[j];
 
-    carry_prop_serial_kernel<<<1, 1, 0, ctx.stream_a>>>(
-        ctx.d_C_hi, ctx.d_C_lo, ctx.d_out, ctx.N, M);
+    size_t num_segs = (ctx.N + CARRY_SEG - 1) / CARRY_SEG;
+
+    carry_intra_segment_kernel<<<num_segs, 1, 0, ctx.stream_a>>>(
+        ctx.d_C_hi, ctx.d_C_lo, ctx.d_out, ctx.d_seg_carry, ctx.N, M);
+
+    carry_inter_segment_kernel<<<1, 1, 0, ctx.stream_a>>>(
+        ctx.d_seg_carry, num_segs);
+
+    carry_fixup_kernel<<<num_segs, 1, 0, ctx.stream_a>>>(
+        ctx.d_out, ctx.d_seg_carry, ctx.N);
 
     cudaStreamSynchronize(ctx.stream_a);
 
@@ -276,6 +287,7 @@ void cleanup_ntt_context(NTTContext &ctx) {
     cudaFree(ctx.d_C_hi);
     cudaFree(ctx.d_C_lo);
     cudaFree(ctx.d_out);
+    cudaFree(ctx.d_seg_carry);
 }
 
 void cleanup_ntt_precomputed(NTTPrecomputed &pre) {
