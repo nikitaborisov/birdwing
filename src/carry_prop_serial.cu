@@ -26,7 +26,6 @@ __global__ void carry_intra_segment_kernel(
 
         __int128 temp = val + carry;
         uint32_t limb = (uint32_t)(temp & 0xFFFFFFFFULL);
-        if (limb < 0) { limb += BASE; temp -= BASE; }
         out[i] = (uint32_t)limb;
         carry = temp >> 32;
     }
