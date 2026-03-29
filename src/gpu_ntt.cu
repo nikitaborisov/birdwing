@@ -164,10 +164,11 @@ NTTContext allocate_ntt_context(const NTTPrecomputed &pre, size_t L_A, size_t L_
         cudaMalloc(&ctx.c_dev[i], p.n * sizeof(TestDataType));
     }
 
-    cudaMalloc(&ctx.d_C_hi, pre.N * sizeof(uint64_t));
-    cudaMalloc(&ctx.d_C_lo, pre.N * sizeof(uint64_t));
     cudaMalloc(&ctx.a_raw_dev, L_A * sizeof(TestDataTypeUint));
     cudaMalloc(&ctx.b_raw_dev, L_B * sizeof(TestDataTypeUint));
+    cudaMalloc(&ctx.d_C_hi, pre.N * sizeof(uint64_t));
+    cudaMalloc(&ctx.d_C_lo, pre.N * sizeof(uint64_t));
+    cudaMalloc(&ctx.d_out,  (pre.N + 1) * sizeof(uint32_t));  // ADD THIS
 
     cudaStreamCreate(&ctx.stream_a);
     cudaStreamCreate(&ctx.stream_b);
@@ -182,8 +183,7 @@ void execute_ntt_multiply(
     NTTContext &ctx,
     const TestDataTypeUint* a_pinned,
     const TestDataTypeUint* b_pinned,
-    vector<uint64_t> &C_hi,
-    vector<uint64_t> &C_lo)
+    vector<TestDataTypeUint> &C_out)
 {
     cudaMemcpyAsync(ctx.a_raw_dev, a_pinned,
                 ctx.L_A * sizeof(TestDataTypeUint),
@@ -251,8 +251,16 @@ void execute_ntt_multiply(
     // ctx.c_dev[i] holds INTT results — pass directly to CRT, no host round-trip
     crt_combine_gpu(ctx.d_C_hi, ctx.d_C_lo, ctx.N);
     
-    cudaMemcpy(C_hi.data(), ctx.d_C_hi, ctx.N * sizeof(uint64_t), cudaMemcpyDeviceToHost);
-    cudaMemcpy(C_lo.data(), ctx.d_C_lo, ctx.N * sizeof(uint64_t), cudaMemcpyDeviceToHost);
+    unsigned __int128 M = 1;
+    for (int j = 0; j < NUM_MODULI; j++) M *= moduli[j];
+
+    carry_prop_serial_kernel<<<1, 1, 0, ctx.stream_a>>>(
+        ctx.d_C_hi, ctx.d_C_lo, ctx.d_out, ctx.N, M);
+
+    cudaStreamSynchronize(ctx.stream_a);
+
+    cudaMemcpy(C_out.data(), ctx.d_out,
+            (ctx.N + 1) * sizeof(TestDataTypeUint), cudaMemcpyDeviceToHost);
 }
 
 void cleanup_ntt_context(NTTContext &ctx) {
@@ -263,10 +271,11 @@ void cleanup_ntt_context(NTTContext &ctx) {
     }
     cudaStreamDestroy(ctx.stream_a);
     cudaStreamDestroy(ctx.stream_b);
-    cudaFree(ctx.d_C_hi);
-    cudaFree(ctx.d_C_lo);
     cudaFree(ctx.a_raw_dev);
     cudaFree(ctx.b_raw_dev);
+    cudaFree(ctx.d_C_hi);
+    cudaFree(ctx.d_C_lo);
+    cudaFree(ctx.d_out);
 }
 
 void cleanup_ntt_precomputed(NTTPrecomputed &pre) {

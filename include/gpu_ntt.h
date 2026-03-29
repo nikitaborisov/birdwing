@@ -3,6 +3,7 @@
 #include "ntt.cuh"
 #include "config.h"
 #include "crt_gpu.h"
+#include "carry_prop_serial.h"
 #include <vector>
 
 using namespace std;
@@ -30,8 +31,9 @@ struct NTTContext {
 
     cudaStream_t stream_a, stream_b;
 
-    uint64_t* d_C_hi = nullptr;
-    uint64_t* d_C_lo = nullptr;
+    uint64_t* d_C_hi;
+    uint64_t* d_C_lo;
+    uint32_t* d_out;
 };
 
 struct NTTPrecomputed {
@@ -52,8 +54,7 @@ void execute_ntt_multiply(
     NTTContext &ctx,
     const TestDataTypeUint* a_pinned,
     const TestDataTypeUint* b_pinned,
-    vector<uint64_t> &C_hi,
-    vector<uint64_t> &C_lo
+    vector<TestDataTypeUint> &C_out
 );
 
 void cleanup_ntt_context(NTTContext &ctx);

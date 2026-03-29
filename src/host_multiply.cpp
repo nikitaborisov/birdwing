@@ -38,8 +38,7 @@ void host_multiply_merge(const vector<TestDataTypeUint> &A, const vector<TestDat
     memcpy(a_pinned, A.data(), L_A * sizeof(TestDataTypeUint));
     memcpy(b_pinned, B.data(), L_B * sizeof(TestDataTypeUint));
 
-    vector<uint64_t> C_hi(N), C_lo(N);
-    vector<__uint128_t> C_big(N);
+    vector<TestDataTypeUint> C_out(N + 1, 0);
     C.resize(L_C + 1, 0);
 
     unsigned __int128 M = 1;
@@ -49,32 +48,11 @@ void host_multiply_merge(const vector<TestDataTypeUint> &A, const vector<TestDat
 
     auto t0 = chrono::high_resolution_clock::now();
     NTTContext ctx = allocate_ntt_context(pre, L_A, L_B);
-    execute_ntt_multiply(ctx, a_pinned, b_pinned, C_hi, C_lo);
+    execute_ntt_multiply(ctx, a_pinned, b_pinned, C_out);
     auto t1 = chrono::high_resolution_clock::now();
 
-    for (size_t i = 0; i < N; i++) {
-        C_big[i] = ((unsigned __int128)C_hi[i] << 64) | C_lo[i];
-        if (C_big[i] > M / 2) C_big[i] -= M;
-    }
-
-    const __int128 BASE = (__int128)1 << 32;
-    __int128 carry = 0;
-
-    for (size_t i = 0; i < L_C; ++i) {
-        __int128 temp = C_big[i] + carry;
-
-        __int128 limb = temp % BASE;
-        if (limb < 0) {
-            limb += BASE;
-            temp -= BASE;
-        }
-
-        C[i] = (TestDataTypeUint)limb;
-        carry = (temp - limb) / BASE;
-    }
-
-    if (carry != 0)
-        C[L_C] = (TestDataTypeUint)carry;
+    for (size_t i = 0; i <= L_C; i++)
+        C[i] = C_out[i];
 
     cleanup_ntt_context(ctx);
     auto t2 = chrono::high_resolution_clock::now();
