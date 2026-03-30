@@ -17,12 +17,13 @@ __global__ void carry_intra_segment_kernel(
     size_t seg_start = (size_t)blockIdx.x * CARRY_SEG;
     size_t seg_end   = min(seg_start + CARRY_SEG, N);
 
-    const __int128 BASE = (__int128)1 << 32;
     __int128 carry = 0;
+
+    __int128 half_M = M / 2;
 
     for (size_t i = seg_start; i < seg_end; i++) {
         __int128 val = ((__uint128_t)C_hi[i] << 64) | C_lo[i];
-        if (val > (__int128)(M / 2)) val -= (__int128)M;
+        if (val > half_M) val -= (__int128)M;
 
         __int128 temp = val + carry;
         uint32_t limb = (uint32_t)(temp & 0xFFFFFFFFULL);
