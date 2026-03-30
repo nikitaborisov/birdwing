@@ -64,7 +64,7 @@ vector<TestDataTypeUint> random_limbs(size_t n, uint64_t seed)
         if (i % 8 == 0) v[i] = 0; // edge case
         else if (i % 8 == 1) v[i] = 1;
         // else if (i % 8 == 2) v[i] = numeric_limits<TestDataTypeUint>::max();
-        else v[i] = (TestDataTypeUint)rng() % (1ULL << 30);
+        else v[i] = (TestDataTypeUint)rng() % (1ULL << 31);
     }
     return v;
 }
@@ -73,6 +73,8 @@ vector<TestDataTypeUint> random_limbs(size_t n, uint64_t seed)
 bool compare_vectors(const vector<TestDataTypeUint>& A,
                      const vector<TestDataTypeUint>& B)
 {
+    const size_t MAX_REPORT = 4;
+
     if (A.size() != B.size()) {
         cout << RED_BOLD << "[FAIL] Size mismatch: "
              << A.size() << " vs " << B.size() << RESET << "\n";
@@ -80,14 +82,31 @@ bool compare_vectors(const vector<TestDataTypeUint>& A,
     }
 
     bool ok = true;
+    size_t mismatch_count = 0;
+
     for (size_t i = 0; i < A.size(); i++) {
         if (A[i] != B[i]) {
-            cout << RED_BOLD << "[MISMATCH] index " << i
-                 << " GPU=" << A[i]
-                 << " CPU=" << B[i] << RESET << "\n";
+            if (mismatch_count < MAX_REPORT) {
+                cout << RED_BOLD << "[MISMATCH] index " << i
+                     << " GPU=" << A[i]
+                     << " CPU=" << B[i] << RESET << "\n";
+            }
+            mismatch_count++;
             ok = false;
+
+            if (mismatch_count == MAX_REPORT) {
+                cout << RED_BOLD
+                     << "... further mismatches not reported ..."
+                     << RESET << "\n";
+            }
         }
     }
+
+    if (mismatch_count > 0) {
+        cout << RED_BOLD << "[SUMMARY] Total mismatches: "
+             << mismatch_count << RESET << "\n";
+    }
+
     return ok;
 }
 
