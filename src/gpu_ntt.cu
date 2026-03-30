@@ -195,6 +195,13 @@ void execute_ntt_multiply(
                 ctx.L_B * sizeof(TestDataTypeUint),
                 cudaMemcpyHostToDevice, ctx.stream_b);
 
+    zero_pad_gpu(ctx.a_raw_dev, ctx.a_dev[0], ctx.L_A, ctx.N, ctx.stream_a);
+    zero_pad_gpu(ctx.b_raw_dev, ctx.b_dev[0], ctx.L_B, ctx.N, ctx.stream_b);
+    cudaMemcpyAsync(ctx.a_dev[1], ctx.a_dev[0], ctx.N * sizeof(TestDataType), cudaMemcpyDeviceToDevice, ctx.stream_a);
+    cudaMemcpyAsync(ctx.a_dev[2], ctx.a_dev[0], ctx.N * sizeof(TestDataType), cudaMemcpyDeviceToDevice, ctx.stream_a);
+    cudaMemcpyAsync(ctx.b_dev[1], ctx.b_dev[0], ctx.N * sizeof(TestDataType), cudaMemcpyDeviceToDevice, ctx.stream_b);
+    cudaMemcpyAsync(ctx.b_dev[2], ctx.b_dev[0], ctx.N * sizeof(TestDataType), cudaMemcpyDeviceToDevice, ctx.stream_b);
+
     for (int i = 0; i < NUM_MODULI; i++) {
         ntt_rns_configuration<TestDataType> cfg_a = {
             .n_power = ctx.logN,
@@ -212,11 +219,9 @@ void execute_ntt_multiply(
             .zero_padding = false,
             .stream = ctx.stream_b
         };
-        zero_pad_gpu(ctx.a_raw_dev, ctx.a_dev[i], ctx.L_A, ctx.N, ctx.stream_a);
         GPU_NTT_Inplace(ctx.a_dev[i], ctx.forward_omega_dev[i],
                         ctx.modulus_dev[i], cfg_a, BATCH, 1);
 
-        zero_pad_gpu(ctx.b_raw_dev, ctx.b_dev[i], ctx.L_B, ctx.N, ctx.stream_b);
         GPU_NTT_Inplace(ctx.b_dev[i], ctx.forward_omega_dev[i],
                         ctx.modulus_dev[i], cfg_b, BATCH, 1);
     }
