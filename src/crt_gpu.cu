@@ -9,19 +9,10 @@ using namespace std;
 // Constant memory: Garner params visible to all threads
 __constant__ uint64_t d_primes[NUM_MODULI];
 __constant__ uint64_t d_inv[NUM_MODULI];
-__constant__ uint64_t d_prefix_M[NUM_MODULI];
 __constant__ uint64_t d_M_mod_table[NUM_MODULI][NUM_MODULI];
 __constant__ uint64_t d_barrett_m[NUM_MODULI];
 
 __constant__ TestDataTypeUint* d_residue_ptrs[NUM_MODULI];
-
-// (hi, lo) += b,  where hi is small (~26 bits) so no hi overflow
-__device__ __forceinline__
-void add128(uint64_t &hi, uint64_t &lo, uint64_t b) {
-    uint64_t old_lo = lo;
-    lo += b;
-    if (lo < old_lo) hi++;
-}
 
 // (hi, lo) += (b_hi, b_lo)
 __device__ __forceinline__
@@ -39,19 +30,6 @@ void mul128_scalar(uint64_t &hi, uint64_t &lo, uint64_t b) {
     hi = hi * b + lo_hi;   // hi*b can't overflow: hi<2^26, b<2^30 -> product<2^56
     lo = lo_lo;
 }
-
-// (hi << 64 | lo) % p,  using __uint128_t which is valid in device code
-__device__ __forceinline__
-uint64_t mod128(uint64_t hi, uint64_t lo, uint64_t p) {
-    unsigned __int128 val = ((unsigned __int128)hi << 64) | lo;
-    return (uint64_t)(val % p);
-}
-
-// (a * b) % p, safe via __uint128_t
-// __device__ __forceinline__
-// uint64_t mulmod64(uint64_t a, uint64_t b, uint64_t p) {
-//     return (uint64_t)((unsigned __int128)a * b % p);
-// }
 
 __device__ __forceinline__
 uint64_t mulmod64(uint64_t a, uint64_t b, uint64_t p, uint64_t m) {
@@ -74,8 +52,7 @@ CRTGarnerParams compute_garner_params(const vector<TestDataTypeUint> &primes) {
         assert((pi - 1) <= (uint64_t)UINT32_MAX &&
            "prime too large for 64-bit product");
         p.primes[i]   = pi;
-        p.prefix_M[i] = (uint64_t)(M % pi);
-        p.inv[i]      = (i == 0) ? 1ULL : modinv_u64(p.prefix_M[i], pi);
+        p.inv[i]      = (i == 0) ? 1ULL : modinv_u64((uint64_t)(M % pi), pi);
 
         unsigned __int128 Mk = 1;
         for (int k = 0; k < NUM_MODULI; k++) {
@@ -93,7 +70,6 @@ CRTGarnerParams compute_garner_params(const vector<TestDataTypeUint> &primes) {
 void upload_garner_params(const CRTGarnerParams &params) {
     cudaMemcpyToSymbol(d_primes,   params.primes,   NUM_MODULI * sizeof(uint64_t));
     cudaMemcpyToSymbol(d_inv,      params.inv,       NUM_MODULI * sizeof(uint64_t));
-    cudaMemcpyToSymbol(d_prefix_M, params.prefix_M,  NUM_MODULI * sizeof(uint64_t));
     cudaMemcpyToSymbol(d_M_mod_table, params.M_mod_table, NUM_MODULI * NUM_MODULI * sizeof(uint64_t));
     cudaMemcpyToSymbol(d_barrett_m, params.barrett_m, NUM_MODULI * sizeof(uint64_t));
 }

@@ -39,10 +39,8 @@ void host_multiply_merge(const vector<TestDataTypeUint> &A, const vector<TestDat
     memcpy(b_pinned, B.data(), L_B * sizeof(TestDataTypeUint));
 
     vector<TestDataTypeUint> C_out(N + 1, 0);
-    C.resize(L_C + 1, 0);
 
-    unsigned __int128 M = 1;
-    for (int j = 0; j < NUM_MODULI; j++) M *= moduli[j];
+    C.resize(L_C + 1, 0);
 
     NTTPrecomputed pre = precompute_ntt(N);
 

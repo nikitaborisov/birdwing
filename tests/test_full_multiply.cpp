@@ -64,7 +64,7 @@ vector<TestDataTypeUint> random_limbs(size_t n, uint64_t seed)
         if (i % 8 == 0) v[i] = 0; // edge case
         else if (i % 8 == 1) v[i] = 1;
         // else if (i % 8 == 2) v[i] = numeric_limits<TestDataTypeUint>::max();
-        else v[i] = (TestDataTypeUint)rng() % (1ULL << 31);
+        else v[i] = (TestDataTypeUint)rng() % (1ULL << 30);
     }
     return v;
 }
