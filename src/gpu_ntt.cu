@@ -219,10 +219,12 @@ void execute_ntt_multiply(
         zero_pad_gpu(ctx.b_raw_dev, ctx.b_dev[i], ctx.L_B, ctx.N, ctx.stream_b);
         GPU_NTT_Inplace(ctx.b_dev[i], ctx.forward_omega_dev[i],
                         ctx.modulus_dev[i], cfg_b, BATCH, 1);
+    }
 
-        cudaStreamSynchronize(ctx.stream_a);
-        cudaStreamSynchronize(ctx.stream_b);
+    cudaStreamSynchronize(ctx.stream_a);
+    cudaStreamSynchronize(ctx.stream_b);
 
+    for (int i = 0; i < NUM_MODULI; i++) {
         int threads = 256;
         int blocks = (ctx.N + threads - 1) / threads;
         pointwise_mul_kernel<<<blocks, threads, 0, ctx.stream_a>>>(
