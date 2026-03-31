@@ -10,7 +10,8 @@ __global__ void carry_intra_segment_kernel(
     uint32_t*       __restrict__ out,
     int64_t*        __restrict__ seg_carry,
     size_t N,
-    unsigned __int128 M)
+    unsigned __int128 M,
+    unsigned __int128 M_half)
 {
     if (threadIdx.x != 0) return;
 
@@ -19,11 +20,9 @@ __global__ void carry_intra_segment_kernel(
 
     __int128 carry = 0;
 
-    __int128 half_M = M / 2;
-
     for (size_t i = seg_start; i < seg_end; i++) {
         __int128 val = ((__uint128_t)C_hi[i] << 64) | C_lo[i];
-        if (val > half_M) val -= (__int128)M;
+        if (val > M_half) val -= (__int128)M;
 
         __int128 temp = val + carry;
         uint32_t limb = (uint32_t)(temp & 0xFFFFFFFFULL);

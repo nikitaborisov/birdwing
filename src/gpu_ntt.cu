@@ -186,7 +186,8 @@ void execute_ntt_multiply(
     NTTContext &ctx,
     const TestDataTypeUint* a_pinned,
     const TestDataTypeUint* b_pinned,
-    vector<TestDataTypeUint> &C_out)
+    vector<TestDataTypeUint> &C_out,
+    __int128 M, __int128 M_half)
 {
     cudaMemcpyAsync(ctx.a_raw_dev, a_pinned,
                 ctx.L_A * sizeof(TestDataTypeUint),
@@ -255,14 +256,11 @@ void execute_ntt_multiply(
 
     // ctx.c_dev[i] holds INTT results — pass directly to CRT, no host round-trip
     crt_combine_gpu(ctx.d_C_hi, ctx.d_C_lo, ctx.N);
-    
-    unsigned __int128 M = 1;
-    for (int j = 0; j < NUM_MODULI; j++) M *= moduli[j];
 
     size_t num_segs = (ctx.N + CARRY_SEG - 1) / CARRY_SEG;
 
     carry_intra_segment_kernel<<<num_segs, 1, 0, ctx.stream_a>>>(
-        ctx.d_C_hi, ctx.d_C_lo, ctx.d_out, ctx.d_seg_carry, ctx.N, M);
+        ctx.d_C_hi, ctx.d_C_lo, ctx.d_out, ctx.d_seg_carry, ctx.N, M, M_half);
 
     carry_inter_segment_kernel<<<1, 1, 0, ctx.stream_a>>>(
         ctx.d_seg_carry, num_segs);

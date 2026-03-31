@@ -10,7 +10,8 @@ __global__ void carry_intra_segment_kernel(
     uint32_t*       __restrict__ d_out,
     int64_t*        __restrict__ d_segment_carry,
     size_t N,
-    unsigned __int128 M);
+    unsigned __int128 M,
+    unsigned __int128 M_half);
 
 __global__ void carry_inter_segment_kernel(
     int64_t* __restrict__ d_segment_carry,

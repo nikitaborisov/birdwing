@@ -55,7 +55,8 @@ void execute_ntt_multiply(
     NTTContext &ctx,
     const TestDataTypeUint* a_pinned,
     const TestDataTypeUint* b_pinned,
-    vector<TestDataTypeUint> &C_out
+    vector<TestDataTypeUint> &C_out,
+    __int128 M, __int128 M_half
 );
 
 void cleanup_ntt_context(NTTContext &ctx);
