@@ -30,7 +30,7 @@ using namespace gpuntt;
 
 static constexpr int BENCH_LOG_N_32  = 20;   // polynomial degree = 2^BENCH_LOG_N
 static constexpr int BENCH_LOG_N_64 = 19;
-static constexpr int BENCH_ITERS  = 2;  // counted iterations
+static constexpr int BENCH_ITERS  = 100;  // counted iterations
 static constexpr int BENCH_WARMUP = 1;   // warm-up iterations (excluded)
 
 // ---------------------------------------------------------------------------
@@ -93,6 +93,23 @@ struct CudaTimer {
     }
 };
 
+template <typename DataT>
+vector<DataT> cpu_roundtrip_reference(
+    const NTTParameters<DataT>& params,
+    vector<DataT>& input)
+{
+    // CPU NTT engine
+    NTTCPU<DataT> cpu(params);
+
+    // Forward transform
+    vector<DataT> freq = cpu.ntt(input);
+
+    // Inverse transform (if your library provides it)
+    vector<DataT> time = cpu.intt(freq);
+
+    return time;
+}
+
 // ---------------------------------------------------------------------------
 // Benchmark driver (templated on data width)
 // ---------------------------------------------------------------------------
@@ -109,6 +126,7 @@ struct NTTBench {
     vector<Modulus<DataT>*>      d_mod;
     vector<Ninverse<DataT>*>     d_ninv;
     vector<NTTParameters<DataT>> params;
+    vector<vector<DataT>>        h_input;
 
     // ------------------------------------------------------------------
     void setup(int _logN,
@@ -125,6 +143,7 @@ struct NTTBench {
         d_mod.resize(nm);
         d_ninv.resize(nm);
         params.resize(nm);
+        h_input.resize(nm);
 
         for (size_t i = 0; i < nm; ++i) {
             UintT root_logN = derive_root(roots_2_23[i], moduli[i], logN);
@@ -167,6 +186,7 @@ struct NTTBench {
             // Polynomial buffer (constant 1 — stable, avoids zero-input shortcuts)
             cudaMalloc(&d_poly[i], N * sizeof(DataT));
             vector<DataT> hp(N, DataT(1));
+            h_input[i] = hp;
             cudaMemcpy(d_poly[i], hp.data(), N * sizeof(DataT), cudaMemcpyHostToDevice);
         }
 
@@ -242,6 +262,27 @@ struct NTTBench {
 
         return sum_ms / iters;
     }
+
+    bool verify_roundtrip()
+    {
+        for (size_t i = 0; i < d_poly.size(); ++i)
+        {
+            vector<DataT> host(N);
+
+            cudaMemcpy(host.data(), d_poly[i],
+                    N * sizeof(DataT),
+                    cudaMemcpyDeviceToHost);
+
+            vector<DataT> ref = cpu_roundtrip_reference(params[i], h_input[i]);
+
+            if (!check_result(host.data(), ref.data(), N))
+            {
+                std::cout << "Mismatch at modulus " << i << std::endl;
+                return false;
+            }
+        }
+        return true;
+    }
 };
 
 // ---------------------------------------------------------------------------
@@ -272,6 +313,10 @@ int main() {
     NTTBench<D32, U32> bench32;
     bench32.setup(BENCH_LOG_N_32, moduli_32, roots_32);
     float avg32 = bench32.bench_roundtrip(BENCH_WARMUP, BENCH_ITERS);
+    if (!bench32.verify_roundtrip())
+        std::cerr << "32-bit correctness FAILED\n";
+    else
+        std::cout << "32-bit correctness OK\n";
     bench32.teardown();
     nvtxRangePop();
 
@@ -280,6 +325,10 @@ int main() {
     NTTBench<D64, U64> bench64;
     bench64.setup(BENCH_LOG_N_64, moduli_64, roots_64);
     float avg64 = bench64.bench_roundtrip(BENCH_WARMUP, BENCH_ITERS);
+    if (!bench64.verify_roundtrip())
+        std::cerr << "64-bit correctness FAILED\n";
+    else
+        std::cout << "64-bit correctness OK\n";
     bench64.teardown();
     nvtxRangePop();
 
