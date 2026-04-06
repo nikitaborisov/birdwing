@@ -1,7 +1,7 @@
 #include "gpu_ntt.h"
 #include "modular_arith.cuh"
 #include "zero_pad.h"
-#include "carry_prop_serial.h"
+#include "carry_prop.h"
 #include <cuda_runtime.h>
 #include <iostream>
 #include <vector>

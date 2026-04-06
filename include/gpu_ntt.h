@@ -3,7 +3,7 @@
 #include "ntt.cuh"
 #include "config.h"
 #include "crt_gpu.h"
-#include "carry_prop_serial.h"
+#include "carry_prop.h"
 #include <vector>
 
 using namespace std;

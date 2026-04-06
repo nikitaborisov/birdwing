@@ -29,6 +29,10 @@ LIBS        := -lntt-1.0 -lgmp
 SRC_DIR     := src
 OBJ_DIR     := build
 
+BENCH_TARGET := bench_ntt
+BENCH_SRC := bench/gpu_ntt_benchmark.cu
+BENCH_OBJ := $(OBJ_DIR)/gpu_ntt_benchmark.o
+
 # Output binary
 TARGET      := main
 
@@ -97,6 +101,12 @@ $(TEST_BUILD)/%: $(TEST_DIR)/%.cpp $(CPP_OBJS) $(CU_OBJS) | $(TEST_BUILD)
 $(TEST_BUILD)/%: $(TEST_DIR)/%.cu $(CPP_OBJS) $(CU_OBJS) | $(TEST_BUILD)
 	$(NVCC) $(NVCCFLAGS) $(INCLUDES) $< $(CPP_OBJS) $(CU_OBJS) -o $@ $(LIB_PATHS) $(LIBS)
 
+$(BENCH_OBJ): $(BENCH_SRC) | $(OBJ_DIR)
+	$(NVCC) $(NVCCFLAGS) $(INCLUDES) -c $< -o $@
+
+$(BENCH_TARGET): $(BENCH_OBJ) $(CPP_OBJS) $(CU_OBJS)
+	$(NVCC) $(NVCCFLAGS) $(INCLUDES) $(LIB_PATHS) -o $@ $^ $(LIBS)
+
 # Run all tests
 test: $(TEST_BINS)
 	@echo "Running tests..."
@@ -106,4 +116,4 @@ test: $(TEST_BINS)
 	done
 	@echo "All tests passed!"
 
-.PHONY: test
+.PHONY: all clean test bench
