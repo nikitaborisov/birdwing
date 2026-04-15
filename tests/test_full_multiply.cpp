@@ -7,6 +7,7 @@
 #include <gmp.h>
 #include <algorithm>
 #include <fstream>
+#include <iomanip>
 
 #include "../include/multiply.h"
 #include "../include/config.h"
@@ -317,25 +318,41 @@ void benchmark_vs_gmp(size_t L)
 
     const int ITERS = 100;
     double gpu_time = 0.0, gmp_time = 0.0;
+    double gpu_time_sq = 0.0, gmp_time_sq = 0.0;
 
     for (int i = 0; i < ITERS; i++) {
         chrono::duration<double, milli> duration;
         host_multiply_merge(A, B, C_gpu, duration);
-        gpu_time += duration.count();
+        double t = duration.count();
+        gpu_time += t;
+        gpu_time_sq += t * t;
     }
 
     for (int i = 0; i < ITERS; i++) {
         auto t3 = chrono::high_resolution_clock::now();
         C_gmp = gmp_mul(A, B);
         auto t4 = chrono::high_resolution_clock::now();
-        gmp_time += chrono::duration<double, milli>(t4 - t3).count();
+        double t = chrono::duration<double, milli>(t4 - t3).count();
+        gmp_time += t;
+        gmp_time_sq += t * t;
     }
 
-    gpu_time /= ITERS;
-    gmp_time /= ITERS;
+    double gpu_mean = gpu_time / ITERS;
+    double gmp_mean = gmp_time / ITERS;
 
-    cout << "GPU avg time: " << gpu_time << " ms\n";
-    cout << "GMP avg time: " << gmp_time << " ms\n";
+    double gpu_var = (gpu_time_sq / ITERS) - (gpu_mean * gpu_mean);
+    double gmp_var = (gmp_time_sq / ITERS) - (gmp_mean * gmp_mean);
+
+    double gpu_std = sqrt(gpu_var);
+    double gmp_std = sqrt(gmp_var);
+
+    cout << fixed << setprecision(3);
+
+    cout << "GPU avg time: " << gpu_mean
+        << " ms (stddev: " << gpu_std << ")\n";
+
+    cout << "GMP avg time: " << gmp_mean
+        << " ms (stddev: " << gmp_std << ")\n";
 
     bool ok = compare_vectors(C_gpu, C_gmp);
     cout << (ok ? GREEN_BOLD "[MATCH]\n" RESET : RED_BOLD "[MISMATCH]\n" RESET);

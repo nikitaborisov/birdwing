@@ -14,6 +14,12 @@ ifdef PROFILE
     NVCCFLAGS += -DPROFILE -g -lineinfo
 endif
 
+# timing
+ifdef TIMING
+	CXXFLAGS += -DTIMING
+	NVCCFLAGS += -DTIMING
+endif
+
 CUDA_PATH   ?= /usr/local/cuda
 INCLUDES    := -Iinclude -I$(CUDA_PATH)/include \
                -I$(HOME)/.local/include \

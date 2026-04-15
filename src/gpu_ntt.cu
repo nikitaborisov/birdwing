@@ -21,6 +21,32 @@ typedef Data32 TestDataType;
 vector<TestDataTypeUint> moduli = {754974721, 595591169, 645922817};
 vector<TestDataTypeUint> roots_of_unity_2_23 = {663, 721, 19};
 
+struct GPUTimer {
+    cudaEvent_t start, stop;
+
+    GPUTimer() {
+        cudaEventCreate(&start);
+        cudaEventCreate(&stop);
+    }
+
+    ~GPUTimer() {
+        cudaEventDestroy(start);
+        cudaEventDestroy(stop);
+    }
+
+    void tic(cudaStream_t stream = 0) {
+        cudaEventRecord(start, stream);
+    }
+
+    float toc(cudaStream_t stream = 0) {
+        cudaEventRecord(stop, stream);
+        cudaEventSynchronize(stop);
+        float ms = 0;
+        cudaEventElapsedTime(&ms, start, stop);
+        return ms;
+    }
+};
+
 static TestDataType mod_mul(long long a, long long b, long long mod) {
     return (a * b) % mod;
 }
@@ -189,6 +215,17 @@ void execute_ntt_multiply(
     vector<TestDataTypeUint> &C_out,
     __int128 M, __int128 M_half)
 {
+
+    GPUTimer timer;
+
+    float t_ntt   = 0.0f;
+    float t_mul   = 0.0f;
+    float t_intt  = 0.0f;
+    float t_crt   = 0.0f;
+    float t_carry = 0.0f;
+
+    timer.tic(ctx.stream_a);
+
     cudaMemcpyAsync(ctx.a_raw_dev, a_pinned,
                 ctx.L_A * sizeof(TestDataTypeUint),
                 cudaMemcpyHostToDevice, ctx.stream_a);
@@ -225,12 +262,20 @@ void execute_ntt_multiply(
     cudaStreamSynchronize(ctx.stream_a);
     cudaStreamSynchronize(ctx.stream_b);
 
+    t_ntt = timer.toc(ctx.stream_a);
+
+    timer.tic(ctx.stream_a);
+
     for (int i = 0; i < NUM_MODULI; i++) {
         int threads = 256;
         int blocks = (ctx.N + threads - 1) / threads;
         pointwise_mul_kernel<<<blocks, threads, 0, ctx.stream_a>>>(
             ctx.a_dev[i], ctx.b_dev[i], ctx.c_dev[i], moduli[i], ctx.N);
     }
+
+    t_mul = timer.toc(ctx.stream_a);
+
+    timer.tic(ctx.stream_a);
 
     // inverse
     for (int i = 0; i < NUM_MODULI; i++) {
@@ -254,8 +299,16 @@ void execute_ntt_multiply(
 
     cudaStreamSynchronize(ctx.stream_a);
 
+    t_intt = timer.toc(ctx.stream_a);
+
+    timer.tic(ctx.stream_a);
+
     // ctx.c_dev[i] holds INTT results — pass directly to CRT, no host round-trip
     crt_combine_gpu(ctx.d_C_hi, ctx.d_C_lo, ctx.N);
+
+    t_crt = timer.toc(ctx.stream_a);
+
+    timer.tic(ctx.stream_a);
 
     size_t num_segs = (ctx.N + CARRY_SEG - 1) / CARRY_SEG;
 
@@ -270,8 +323,31 @@ void execute_ntt_multiply(
 
     cudaStreamSynchronize(ctx.stream_a);
 
+    t_carry = timer.toc(ctx.stream_a);
+
     cudaMemcpy(C_out.data(), ctx.d_out,
             (ctx.N + 1) * sizeof(TestDataTypeUint), cudaMemcpyDeviceToHost);
+
+    #ifdef TIMING
+    static bool header_written = false;
+
+    ofstream file("ntt_timing.csv", ios::app);
+
+    if (!header_written) {
+        file << "N,L_A,L_B,NTT,MUL,INTT,CRT,CARRY,TOTAL\n";
+        header_written = true;
+    }
+
+    file << ctx.N << ","
+        << ctx.L_A << ","
+        << ctx.L_B << ","
+        << t_ntt << ","
+        << t_mul << ","
+        << t_intt << ","
+        << t_crt << ","
+        << t_carry << "\n";
+    
+    #endif
 }
 
 void cleanup_ntt_context(NTTContext &ctx) {
