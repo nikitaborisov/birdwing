@@ -5,6 +5,16 @@
 #include <vector>
 #include <cstdint>
 
+#ifndef LIMB_BITS
+#define LIMB_BITS 32   // default
+#endif
+
+#if LIMB_BITS == 64
+  using LimbType = uint64_t;
+#else
+  using LimbType = uint32_t;
+#endif
+
 using namespace std;
 
 // Number of moduli used in computations
