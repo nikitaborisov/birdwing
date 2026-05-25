@@ -406,6 +406,7 @@ int main()
         benchmark_vs_gmp(1ULL << 12);
         benchmark_vs_gmp(1ULL << 15);
         benchmark_vs_gmp(1ULL << 20);
+        benchmark_vs_gmp(1ULL << 22);
 
         cout << YELLOW << "\n==== TEST COMPLETE ====\n" << RESET;
         return 0;
