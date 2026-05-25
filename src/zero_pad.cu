@@ -1,18 +1,18 @@
 #include "zero_pad.h"
 
 __global__ void zero_pad_kernel(
-    const TestDataTypeUint* __restrict__ src,
-    TestDataTypeUint* __restrict__ dst,
-    size_t L,   // original length
-    size_t N)   // padded length
+    const uint32_t* __restrict__ src,   // always 32-bit input
+    TestDataTypeUint* __restrict__ dst, // 32 or 64-bit output
+    size_t L,
+    size_t N)
 {
     size_t idx = blockIdx.x * blockDim.x + threadIdx.x;
     if (idx < N)
-        dst[idx] = (idx < L) ? src[idx] : 0;
+        dst[idx] = (idx < L) ? (TestDataTypeUint)src[idx] : 0;
 }
 
 void zero_pad_gpu(
-    const TestDataTypeUint* d_src,
+    const uint32_t* d_src,
     TestDataTypeUint* d_dst,
     size_t L,
     size_t N,

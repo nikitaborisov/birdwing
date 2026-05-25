@@ -11,9 +11,15 @@
 
 #if LIMB_BITS == 64
   using LimbType = uint64_t;
+  using TestDataTypeUint = uint64_t;
+  using TestDataTypeTwice = __uint128_t;
 #else
   using LimbType = uint32_t;
+  using TestDataTypeUint = uint32_t;
+  using TestDataTypeTwice = uint64_t;
 #endif
+
+constexpr int BIT_WIDTH = sizeof(TestDataTypeUint) * 8;
 
 using namespace std;
 
@@ -25,17 +31,6 @@ using namespace std;
 
 // Carry segment size
 #define CARRY_SEG 1024
-
-// Primary unsigned integer type used for test data
-#ifdef USE_UINT64
-    using TestDataTypeUint = uint64_t;
-    using TestDataTypeTwice = __uint128_t;
-#else
-    using TestDataTypeUint = uint32_t;
-    using TestDataTypeTwice = uint64_t;
-#endif
-
-constexpr int BIT_WIDTH = sizeof(TestDataTypeUint) * 8;
 
 // Collection of moduli used across the application
 extern vector<TestDataTypeUint> moduli;
