@@ -61,7 +61,30 @@ test_zero_pad: \
 	@$(TEST_BUILD)/test_zero_pad_64
 
 # ================================================================
+# crt_gpu dual-width tests
+# ================================================================
+
+CRT_SRC      := $(TEST_DIR)/test_crt_gpu.cu
+CRT_SRCS_DEP := $(SRC_DIR)/crt_gpu.cu $(SRC_DIR)/crt_utils.cpp
+
+$(TEST_BUILD)/test_crt_gpu_32: $(CRT_SRC) $(CRT_SRCS_DEP) | $(TEST_BUILD)
+	$(NVCC) $(NVCCFLAGS) -DLIMB_BITS=32 $(INCLUDES) \
+		$^ -o $@ $(LIB_PATHS) $(LIBS)
+
+$(TEST_BUILD)/test_crt_gpu_64: $(CRT_SRC) $(CRT_SRCS_DEP) | $(TEST_BUILD)
+	$(NVCC) $(NVCCFLAGS) -DLIMB_BITS=64 $(INCLUDES) \
+		$^ -o $@ $(LIB_PATHS) $(LIBS)
+
+test_crt_gpu: \
+	$(TEST_BUILD)/test_crt_gpu_32 \
+	$(TEST_BUILD)/test_crt_gpu_64
+	@echo "===== crt_gpu 32-bit ====="
+	@$(TEST_BUILD)/test_crt_gpu_32
+	@echo "===== crt_gpu 64-bit ====="
+	@$(TEST_BUILD)/test_crt_gpu_64
+
+# ================================================================
 # Phony targets
 # ================================================================
 
-.PHONY: test test_zero_pad
+.PHONY: test test_zero_pad test_crt_gpu
