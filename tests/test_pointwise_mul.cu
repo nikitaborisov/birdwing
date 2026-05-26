@@ -58,21 +58,21 @@ void test_pointwise_multiply() {
     }
 
     // Run GPU pointwise multiply
-    // gpu_pointwise_multiply(A_mod, B_mod, C_mod);
+    gpu_pointwise_multiply(A_mod, B_mod, C_mod);
 
     // Verify results against CPU
     bool ok = true;
-    // for (size_t m = 0; m < NUM_MODULI; ++m) {
-    //     for (size_t i = 0; i < N; ++i) {
-    //         TestDataTypeUint expected = cpu_modmul(A_mod[m][i], B_mod[m][i], testmoduli[m]);
-    //         if (C_mod[m][i] != expected) {
-    //             cout << "[ERROR] modulus " << m << ", index " << i
-    //                  << ": GPU=" << C_mod[m][i]
-    //                  << ", CPU=" << expected << endl;
-    //             ok = false;
-    //         }
-    //     }
-    // }
+    for (size_t m = 0; m < NUM_MODULI; ++m) {
+        for (size_t i = 0; i < N; ++i) {
+            TestDataTypeUint expected = cpu_modmul(A_mod[m][i], B_mod[m][i], testmoduli[m]);
+            if (C_mod[m][i] != expected) {
+                cout << "[ERROR] modulus " << m << ", index " << i
+                     << ": GPU=" << C_mod[m][i]
+                     << ", CPU=" << expected << endl;
+                ok = false;
+            }
+        }
+    }
 
     if (ok)
         cout << GREEN_BOLD << "[TEST PASS] All GPU results match CPU reference." << RESET << "\n";

@@ -10,21 +10,21 @@
 #endif
 
 #if LIMB_BITS == 64
-  using LimbType = uint64_t;
-  using TestDataTypeUint = uint64_t;
-  using TestDataTypeTwice = __uint128_t;
+	using LimbType = uint64_t;
+	using TestDataTypeUint = uint64_t;
+	using TestDataTypeTwice = __uint128_t;
+	// Number of moduli used in computations
+	#define NUM_MODULI 2
 #else
-  using LimbType = uint32_t;
-  using TestDataTypeUint = uint32_t;
-  using TestDataTypeTwice = uint64_t;
+	using LimbType = uint32_t;
+	using TestDataTypeUint = uint32_t;
+	using TestDataTypeTwice = uint64_t;
+	#define NUM_MODULI 3
 #endif
 
 constexpr int BIT_WIDTH = sizeof(TestDataTypeUint) * 8;
 
 using namespace std;
-
-// Number of moduli used in computations
-#define NUM_MODULI 3
 
 // Batch size for processing
 #define BATCH 1

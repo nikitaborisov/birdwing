@@ -82,7 +82,7 @@ void test_no_upper_bits_set() {
     for (size_t i = 0; i < 3; i++) {
         ok &= (out[i] == (TestDataTypeUint)src[i]);  // value preserved exactly
         if constexpr (sizeof(TestDataTypeUint) == 8)
-            ok &= ((out[i] >> 32) == 0);             // upper half clean
+            ok &= ((static_cast<uint64_t>(out[i]) & 0xFFFFFFFF00000000ULL) == 0);
     }
     ok &= (out[3] == 0);
     check("no upper bits set after widen", ok);

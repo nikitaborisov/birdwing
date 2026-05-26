@@ -9,14 +9,19 @@
 using namespace std;
 using namespace gpuntt;
 
-typedef Data32 TestDataType;
+#if LIMB_BITS == 64
+    typedef Data64 TestDataType;
+#else
+    typedef Data32 TestDataType;
+#endif
 
 struct NTTContext {
     size_t N;
     int logN;
 
-    TestDataTypeUint* a_raw_dev = nullptr;  // size L_A
-    TestDataTypeUint* b_raw_dev = nullptr;  // size L_B
+    // inputs are always 32-bits
+    uint32_t* a_raw_dev = nullptr;    // size L_A
+    uint32_t* b_raw_dev = nullptr;    // size L_B
     size_t L_A = 0, L_B = 0;
 
     vector<TestDataType*> a_dev;
@@ -33,30 +38,30 @@ struct NTTContext {
 
     uint64_t* d_C_hi;
     uint64_t* d_C_lo;
-    uint32_t* d_out;
-    int64_t*  d_seg_carry;
+    TestDataTypeUint* d_out;
+    int64_t*    d_seg_carry;
 };
 
 struct NTTPrecomputed {
-    size_t N;
-    int logN;
-    vector<NTTParameters<TestDataType>> params;
-    vector<Root<TestDataType>*>     forward_omega_dev;
-    vector<Root<TestDataType>*>     inverse_omega_dev;
-    vector<Modulus<TestDataType>*>  modulus_dev;
-    vector<Ninverse<TestDataType>*> ninv_dev;
-    CRTGarnerParams garner;
+	size_t N;
+	int logN;
+	vector<NTTParameters<TestDataType>> params;
+	vector<Root<TestDataType>*>         forward_omega_dev;
+	vector<Root<TestDataType>*>         inverse_omega_dev;
+	vector<Modulus<TestDataType>*>    modulus_dev;
+	vector<Ninverse<TestDataType>*> ninv_dev;
+	CRTGarnerParams garner;
 };
 
 NTTPrecomputed precompute_ntt(size_t N);
 NTTContext allocate_ntt_context(const NTTPrecomputed &pre, size_t L_A, size_t L_B);
 
 void execute_ntt_multiply(
-    NTTContext &ctx,
-    const TestDataTypeUint* a_pinned,
-    const TestDataTypeUint* b_pinned,
-    vector<TestDataTypeUint> &C_out,
-    __int128 M, __int128 M_half
+	NTTContext &ctx,
+	const uint32_t* a_pinned,
+	const uint32_t* b_pinned,
+	vector<TestDataTypeUint> &C_out,
+	__int128 M, __int128 M_half
 );
 
 void cleanup_ntt_context(NTTContext &ctx);

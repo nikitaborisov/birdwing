@@ -16,10 +16,20 @@
 using namespace std;
 using namespace gpuntt;
 
-typedef Data32 TestDataType;
+#if LIMB_BITS == 64
+  typedef Data64 TestDataType;
+#else
+  typedef Data32 TestDataType;
+#endif
 
-vector<TestDataTypeUint> moduli = {754974721, 595591169, 645922817};
-vector<TestDataTypeUint> roots_of_unity_2_23 = {663, 721, 19};
+#if LIMB_BITS == 64
+  // 62-bit NTT-friendly primes: p = k * 2^M + 1, M >= 23
+  vector<TestDataTypeUint> moduli = {0x6723cbb800001, 0x6723cb6800001};
+  vector<TestDataTypeUint> roots_of_unity_2_23 = {11, 6};
+#else
+  vector<TestDataTypeUint> moduli = {0x23800001, 0x26800001, 0x2d000001};
+  vector<TestDataTypeUint> roots_of_unity_2_23 = {663, 721, 19};
+#endif
 
 struct GPUTimer {
     cudaEvent_t start, stop;
@@ -47,8 +57,13 @@ struct GPUTimer {
     }
 };
 
-static TestDataType mod_mul(long long a, long long b, long long mod) {
-    return (a * b) % mod;
+// helper for modular multiplication; promotes to 64 / 128 bits to prevent overflow and then reduces mod
+static TestDataType mod_mul(TestDataTypeUint a, TestDataTypeUint b, TestDataTypeUint mod) {
+    if constexpr (sizeof(TestDataType) == 4) {
+        return (TestDataType)((uint64_t)a * b % mod);
+    } else {
+        return (TestDataType)((__uint128_t)a * b % mod);
+    }
 }
 
 // helper to generate new factors table compatible with given N
@@ -89,16 +104,18 @@ __device__ __forceinline__ void mul_wide(T a, T b, T &lo, T &hi)
     }
 }
 
-__global__ void pointwise_mul_kernel(TestDataTypeUint* A,
-                                     TestDataTypeUint* B,
-                                     TestDataTypeUint* C,
+__global__ void pointwise_mul_kernel(TestDataType* A,
+                                     TestDataType* B,
+                                     TestDataType* C,
                                      TestDataTypeUint modulus,
                                      size_t N)
 {
     size_t idx = blockIdx.x * blockDim.x + threadIdx.x;
     if (idx < N) {
+        TestDataTypeUint a = (TestDataTypeUint)A[idx];
+        TestDataTypeUint b = (TestDataTypeUint)B[idx];
         TestDataTypeUint lo, hi;
-        mul_wide(A[idx], B[idx], lo, hi);
+        mul_wide(a, b, lo, hi);
 
         if constexpr (sizeof(TestDataTypeUint) == 4) {
             uint64_t full = ((uint64_t)hi << 32) | lo;
@@ -106,7 +123,7 @@ __global__ void pointwise_mul_kernel(TestDataTypeUint* A,
         } else {
             unsigned __int128 full =
                 ((unsigned __int128)hi << 64) | lo;
-            C[idx] = (TestDataTypeUint)(full % modulus);
+            C[idx] = (TestDataType)(full % modulus);
         }
     }
 }
@@ -191,11 +208,11 @@ NTTContext allocate_ntt_context(const NTTPrecomputed &pre, size_t L_A, size_t L_
         cudaMalloc(&ctx.c_dev[i], p.n * sizeof(TestDataType));
     }
 
-    cudaMalloc(&ctx.a_raw_dev, L_A * sizeof(TestDataTypeUint));
-    cudaMalloc(&ctx.b_raw_dev, L_B * sizeof(TestDataTypeUint));
+    cudaMalloc(&ctx.a_raw_dev, L_A * sizeof(uint32_t));
+    cudaMalloc(&ctx.b_raw_dev, L_B * sizeof(uint32_t));
     cudaMalloc(&ctx.d_C_hi, pre.N * sizeof(uint64_t));
     cudaMalloc(&ctx.d_C_lo, pre.N * sizeof(uint64_t));
-    cudaMalloc(&ctx.d_out,  (pre.N + 1) * sizeof(uint32_t));
+    cudaMalloc(&ctx.d_out,  (pre.N + 1) * sizeof(TestDataTypeUint));
     size_t num_segs = (pre.N + CARRY_SEG - 1) / CARRY_SEG;
     cudaMalloc(&ctx.d_seg_carry, num_segs * sizeof(int64_t));
 
@@ -210,27 +227,29 @@ NTTContext allocate_ntt_context(const NTTPrecomputed &pre, size_t L_A, size_t L_
 
 void execute_ntt_multiply(
     NTTContext &ctx,
-    const TestDataTypeUint* a_pinned,
-    const TestDataTypeUint* b_pinned,
+    const uint32_t* a_pinned,
+    const uint32_t* b_pinned,
     vector<TestDataTypeUint> &C_out,
     __int128 M, __int128 M_half)
 {
 
     GPUTimer timer;
 
+    #ifdef TIMING
     float t_ntt   = 0.0f;
     float t_mul   = 0.0f;
     float t_intt  = 0.0f;
     float t_crt   = 0.0f;
     float t_carry = 0.0f;
+    #endif
 
     timer.tic(ctx.stream_a);
 
     cudaMemcpyAsync(ctx.a_raw_dev, a_pinned,
-                ctx.L_A * sizeof(TestDataTypeUint),
+                ctx.L_A * sizeof(uint32_t),
                 cudaMemcpyHostToDevice, ctx.stream_a);
     cudaMemcpyAsync(ctx.b_raw_dev, b_pinned,
-                ctx.L_B * sizeof(TestDataTypeUint),
+                ctx.L_B * sizeof(uint32_t),
                 cudaMemcpyHostToDevice, ctx.stream_b);
 
     for (int i = 0; i < NUM_MODULI; i++) {
@@ -262,7 +281,9 @@ void execute_ntt_multiply(
     cudaStreamSynchronize(ctx.stream_a);
     cudaStreamSynchronize(ctx.stream_b);
 
+    #ifdef TIMING
     t_ntt = timer.toc(ctx.stream_a);
+    #endif
 
     timer.tic(ctx.stream_a);
 
@@ -272,8 +293,9 @@ void execute_ntt_multiply(
         pointwise_mul_kernel<<<blocks, threads, 0, ctx.stream_a>>>(
             ctx.a_dev[i], ctx.b_dev[i], ctx.c_dev[i], moduli[i], ctx.N);
     }
-
+    #ifdef TIMING
     t_mul = timer.toc(ctx.stream_a);
+    #endif
 
     timer.tic(ctx.stream_a);
 
@@ -299,14 +321,18 @@ void execute_ntt_multiply(
 
     cudaStreamSynchronize(ctx.stream_a);
 
+    #ifdef TIMING
     t_intt = timer.toc(ctx.stream_a);
+    #endif
 
     timer.tic(ctx.stream_a);
 
     // ctx.c_dev[i] holds INTT results — pass directly to CRT, no host round-trip
     crt_combine_gpu(ctx.d_C_hi, ctx.d_C_lo, ctx.N);
 
+    #ifdef TIMING
     t_crt = timer.toc(ctx.stream_a);
+    #endif
 
     timer.tic(ctx.stream_a);
 
@@ -323,7 +349,9 @@ void execute_ntt_multiply(
 
     cudaStreamSynchronize(ctx.stream_a);
 
+    #ifdef TIMING
     t_carry = timer.toc(ctx.stream_a);
+    #endif
 
     cudaMemcpy(C_out.data(), ctx.d_out,
             (ctx.N + 1) * sizeof(TestDataTypeUint), cudaMemcpyDeviceToHost);
