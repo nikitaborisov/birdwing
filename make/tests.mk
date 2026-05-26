@@ -84,7 +84,30 @@ test_crt_gpu: \
 	@$(TEST_BUILD)/test_crt_gpu_64
 
 # ================================================================
+# Carry Propagation dual-width tests
+# ================================================================
+
+CARRY_SRC      := $(TEST_DIR)/test_carry_prop.cu
+CARRY_SRCS_DEP := $(SRC_DIR)/carry_prop.cu
+
+$(TEST_BUILD)/test_carry_prop_32: $(CARRY_SRC) $(CARRY_SRCS_DEP) | $(TEST_BUILD)
+	$(NVCC) $(NVCCFLAGS) -DLIMB_BITS=32 $(INCLUDES) \
+		$^ -o $@ $(LIB_PATHS) $(LIBS)
+
+$(TEST_BUILD)/test_carry_prop_64: $(CARRY_SRC) $(CARRY_SRCS_DEP) | $(TEST_BUILD)
+	$(NVCC) $(NVCCFLAGS) -DLIMB_BITS=64 $(INCLUDES) \
+		$^ -o $@ $(LIB_PATHS) $(LIBS)
+
+test_carry_prop: \
+	$(TEST_BUILD)/test_carry_prop_32 \
+	$(TEST_BUILD)/test_carry_prop_64
+	@echo "===== carry_prop 32-bit ====="
+	@$(TEST_BUILD)/test_carry_prop_32
+	@echo "===== carry_prop 64-bit ====="
+	@$(TEST_BUILD)/test_carry_prop_64
+
+# ================================================================
 # Phony targets
 # ================================================================
 
-.PHONY: test test_zero_pad test_crt_gpu
+.PHONY: test test_zero_pad test_crt_gpu test_carry_prop

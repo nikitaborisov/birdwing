@@ -12,13 +12,13 @@
 #if LIMB_BITS == 64
 	using LimbType = uint64_t;
 	using TestDataTypeUint = uint64_t;
-	using TestDataTypeTwice = __uint128_t;
+	#define LIMB_MASK 0xFFFFFFFFFFFFFFFFULL
 	// Number of moduli used in computations
 	#define NUM_MODULI 2
 #else
 	using LimbType = uint32_t;
 	using TestDataTypeUint = uint32_t;
-	using TestDataTypeTwice = uint64_t;
+	#define LIMB_MASK 0xFFFFFFFFULL
 	#define NUM_MODULI 3
 #endif
 
