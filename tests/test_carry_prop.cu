@@ -28,7 +28,7 @@ vector<TestDataTypeUint> cpu_carry_prop(
     unsigned __int128 M_half,
     size_t N)
 {
-    vector<TestDataTypeUint> out(N + 1, 0);
+    vector<TestDataTypeUint> out(N, 0);
     __int128 carry = 0;
 
     for (size_t i = 0; i < N; i++) {
@@ -39,7 +39,6 @@ vector<TestDataTypeUint> cpu_carry_prop(
         out[i] = (TestDataTypeUint)(temp & LIMB_MASK);
         carry  = temp >> LIMB_BITS;
     }
-    out[N] = (TestDataTypeUint)carry;
     return out;
 }
 
@@ -60,8 +59,8 @@ vector<TestDataTypeUint> run_carry_prop(
     cudaMemcpy(d_C_lo, h_C_lo.data(), N * sizeof(uint64_t), cudaMemcpyHostToDevice);
 
     TestDataTypeUint* d_out;
-    cudaMalloc(&d_out, (N + 1) * sizeof(TestDataTypeUint));
-    cudaMemset(d_out, 0, (N + 1) * sizeof(TestDataTypeUint));
+    cudaMalloc(&d_out, N * sizeof(TestDataTypeUint));
+    cudaMemset(d_out, 0, N * sizeof(TestDataTypeUint));
 
     size_t num_segs = (N + CARRY_SEG - 1) / CARRY_SEG;
     int64_t* d_seg_carry;
@@ -76,8 +75,8 @@ vector<TestDataTypeUint> run_carry_prop(
 
     cudaDeviceSynchronize();
 
-    vector<TestDataTypeUint> out(N + 1);
-    cudaMemcpy(out.data(), d_out, (N + 1) * sizeof(TestDataTypeUint), cudaMemcpyDeviceToHost);
+    vector<TestDataTypeUint> out(N);
+    cudaMemcpy(out.data(), d_out, N * sizeof(TestDataTypeUint), cudaMemcpyDeviceToHost);
 
     cudaFree(d_C_hi);
     cudaFree(d_C_lo);
@@ -189,9 +188,7 @@ void test_negative_after_M_reduction() {
     auto gpu = run_carry_prop(C_hi, C_lo, M, M_half, N);
     auto cpu = cpu_carry_prop(C_hi, C_lo, M, M_half, N);
 
-    bool ok = true;
-    for (size_t i = 0; i < N; i++)  // N not N+1
-        ok &= (gpu[i] == cpu[i]);
+    bool ok = (gpu == cpu);
     check("negative after M reduction", ok);
 }
 
@@ -238,9 +235,7 @@ void test_large_random() {
     }
     printf("  total mismatches in first N: %zu\n", mismatch_count);
 
-    bool ok = true;
-    for (size_t i = 0; i < N; i++)  // N not N+1
-        ok &= (gpu[i] == cpu[i]);
+    bool ok = (gpu == cpu);
     check("large random (N=2^20)", ok);
 }
 
