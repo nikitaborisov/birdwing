@@ -22,7 +22,7 @@ using namespace std;
 using limb_t = TestDataTypeUint; // each limb is stored in 32-bit containers
 
 // host functions
-void host_multiply_merge(const vector<TestDataTypeUint> &A, const vector<TestDataTypeUint> &B, vector<TestDataTypeUint> &C, chrono::duration<double, milli> &duration) {
+void host_multiply_merge(const vector<uint32_t> &A, const vector<uint32_t> &B, vector<TestDataTypeUint> &C, chrono::duration<double, milli> &duration) {
     size_t L_A = A.size();
     size_t L_B = B.size();
     size_t L_C = L_A + L_B - 1;
@@ -31,12 +31,12 @@ void host_multiply_merge(const vector<TestDataTypeUint> &A, const vector<TestDat
     while (N < L_C)
         N <<= 1;
 
-    TestDataTypeUint* a_pinned;
-    TestDataTypeUint* b_pinned;
-    cudaMallocHost(&a_pinned, L_A * sizeof(TestDataTypeUint));
-    cudaMallocHost(&b_pinned, L_B * sizeof(TestDataTypeUint));
-    memcpy(a_pinned, A.data(), L_A * sizeof(TestDataTypeUint));
-    memcpy(b_pinned, B.data(), L_B * sizeof(TestDataTypeUint));
+    uint32_t* a_pinned;
+    uint32_t* b_pinned;
+    cudaMallocHost(&a_pinned, L_A * sizeof(uint32_t));
+    cudaMallocHost(&b_pinned, L_B * sizeof(uint32_t));
+    memcpy(a_pinned, A.data(), L_A * sizeof(uint32_t));
+    memcpy(b_pinned, B.data(), L_B * sizeof(uint32_t));
 
     vector<TestDataTypeUint> C_out(N + 1, 0);
 

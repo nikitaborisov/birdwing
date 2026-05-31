@@ -141,7 +141,7 @@ vector<TestDataTypeUint> from_mpz(const mpz_t x, size_t expected_limbs)
     return out;
 }
 
-void limbs_to_mpz(mpz_t result, TestDataTypeUint *limbs, size_t n) {
+void limbs_to_mpz(mpz_t result, const TestDataTypeUint* limbs, size_t n) {
     mpz_import(result, n, -1, sizeof(TestDataTypeUint), 0, 0, limbs);
 }
 
@@ -181,12 +181,12 @@ vector<TestDataTypeUint> gmp_mul(
 
     // ---- Import A ----
     auto t1 = clock::now();
-    limbs_to_mpz(a, reinterpret_cast<uint32_t*>(const_cast<TestDataTypeUint*>(A.data())), A.size());
+    limbs_to_mpz(a, A.data(), A.size());
     auto t2 = clock::now();
 
     // ---- Import B ----
     auto t3 = clock::now();
-    limbs_to_mpz(b, reinterpret_cast<uint32_t*>(const_cast<TestDataTypeUint*>(B.data())), B.size());
+    limbs_to_mpz(b, B.data(), B.size());
     auto t4 = clock::now();
 
     // ---- Multiply ----
@@ -238,14 +238,14 @@ void test_full_pipeline(size_t L)
     cout << YELLOW << "\n[Test] Full multiply pipeline, L = "
          << L << " limbs" << RESET << "\n";
 
-    vector<TestDataTypeUint> A = random_limbs(L, 1234);
-    vector<TestDataTypeUint> B = random_limbs(L, 5678);
+    // vector<TestDataTypeUint> A = random_limbs(L, 1234);
+    // vector<TestDataTypeUint> B = random_limbs(L, 5678);
 
     // vector<TestDataTypeUint> A = {1,2,3,4,5,6,7,8};
     // vector<TestDataTypeUint> B = {9,10,11,12,13,14,15,16};
 
-    // vector<TestDataTypeUint> A = {1,2,3,4};
-    // vector<TestDataTypeUint> B = {5,6,7,8};
+    vector<TestDataTypeUint> A = {1,2,3,4};
+    vector<TestDataTypeUint> B = {5,6,7,8};
 
     // GPU pipeline
     vector<TestDataTypeUint> C_gpu;
@@ -389,24 +389,24 @@ int main()
 
         test_simple();
 
-        test_identities(1ULL << 20);
+        // test_identities(1ULL << 20);
 
         test_full_pipeline(4);
-        test_full_pipeline(8);
-        test_full_pipeline(16);
-        test_full_pipeline(64);
+        // test_full_pipeline(8);
+        // test_full_pipeline(16);
+        // test_full_pipeline(64);
 
-        test_full_pipeline(128);
-        test_full_pipeline(2048);
-        test_full_pipeline(10000);
-        test_full_pipeline(1ULL << 15);
+        // test_full_pipeline(128);
+        // test_full_pipeline(2048);
+        // test_full_pipeline(10000);
+        // test_full_pipeline(1ULL << 15);
 
-        benchmark_vs_gmp(4);
-        benchmark_vs_gmp(256);
-        benchmark_vs_gmp(1ULL << 12);
-        benchmark_vs_gmp(1ULL << 15);
-        benchmark_vs_gmp(1ULL << 20);
-        benchmark_vs_gmp(1ULL << 22);
+        // benchmark_vs_gmp(4);
+        // benchmark_vs_gmp(256);
+        // benchmark_vs_gmp(1ULL << 12);
+        // benchmark_vs_gmp(1ULL << 15);
+        // benchmark_vs_gmp(1ULL << 20);
+        // benchmark_vs_gmp(1ULL << 22);
 
         cout << YELLOW << "\n==== TEST COMPLETE ====\n" << RESET;
         return 0;

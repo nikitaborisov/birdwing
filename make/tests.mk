@@ -107,7 +107,21 @@ test_carry_prop: \
 	@$(TEST_BUILD)/test_carry_prop_64
 
 # ================================================================
+# End-to-end dual-width builds
+# ================================================================
+
+E2E_SRCS := tests/test_full_multiply.cpp $(CPP_SRCS) $(CU_SRCS)
+
+main_32: | $(OBJ_DIR)
+	$(NVCC) $(NVCCFLAGS) -DLIMB_BITS=32 $(INCLUDES) $(LIB_PATHS) \
+		$(E2E_SRCS) -o build/test_full_multiply_32 $(LIBS)
+
+main_64: | $(OBJ_DIR)
+	$(NVCC) $(NVCCFLAGS) -DLIMB_BITS=64 $(INCLUDES) $(LIB_PATHS) \
+		$(E2E_SRCS) -o build/test_full_multiply_64 $(LIBS)
+
+# ================================================================
 # Phony targets
 # ================================================================
 
-.PHONY: test test_zero_pad test_crt_gpu test_carry_prop
+.PHONY: test test_zero_pad test_crt_gpu test_carry_prop main_32 main_64
