@@ -17,18 +17,18 @@ using namespace std;
 using namespace gpuntt;
 
 #if LIMB_BITS == 64
-  typedef Data64 TestDataType;
+    typedef Data64 TestDataType;
 #else
-  typedef Data32 TestDataType;
+    typedef Data32 TestDataType;
 #endif
 
 #if LIMB_BITS == 64
-  // 62-bit NTT-friendly primes: p = k * 2^M + 1, M >= 23
-  vector<TestDataTypeUint> moduli = {0x6723cbb800001, 0x6723cb6800001};
-  vector<TestDataTypeUint> roots_of_unity_2_23 = {11, 6};
+    // 62-bit NTT-friendly primes: p = k * 2^M + 1, M >= 23
+    vector<TestDataTypeUint> moduli = {0x6723cbb800001, 0x6723cb6800001};
+    vector<TestDataTypeUint> roots_of_unity_2_23 = {11, 6};
 #else
-  vector<TestDataTypeUint> moduli = {0x23800001, 0x26800001, 0x2d000001};
-  vector<TestDataTypeUint> roots_of_unity_2_23 = {663, 721, 19};
+    vector<TestDataTypeUint> moduli = {0x23800001, 0x26800001, 0x2d000001};
+    vector<TestDataTypeUint> roots_of_unity_2_23 = {663, 721, 19};
 #endif
 
 struct GPUTimer {
@@ -219,7 +219,7 @@ NTTContext allocate_ntt_context(const NTTPrecomputed &pre, size_t L_A, size_t L_
     cudaStreamCreate(&ctx.stream_a);
     cudaStreamCreate(&ctx.stream_b);
 
-    upload_residue_ptrs(ctx.c_dev);
+    // upload_residue_ptrs(ctx.c_dev);
 
     cudaDeviceSynchronize();
     return ctx;
@@ -251,6 +251,17 @@ void execute_ntt_multiply(
     cudaMemcpyAsync(ctx.b_raw_dev, b_pinned,
                 ctx.L_B * sizeof(uint32_t),
                 cudaMemcpyHostToDevice, ctx.stream_b);
+    
+    #ifdef DEBUG
+    // verify inputs copied correctly
+    cudaStreamSynchronize(ctx.stream_a);
+    cudaStreamSynchronize(ctx.stream_b);
+    vector<uint32_t> chk_a(ctx.L_A), chk_b(ctx.L_B);
+    cudaMemcpy(chk_a.data(), ctx.a_raw_dev, ctx.L_A*sizeof(uint32_t), cudaMemcpyDeviceToHost);
+    cudaMemcpy(chk_b.data(), ctx.b_raw_dev, ctx.L_B*sizeof(uint32_t), cudaMemcpyDeviceToHost);
+    printf("a_raw: "); for(auto x:chk_a) printf("%u ",x); printf("\n");
+    printf("b_raw: "); for(auto x:chk_b) printf("%u ",x); printf("\n");
+    #endif
 
     for (int i = 0; i < NUM_MODULI; i++) {
         ntt_rns_configuration<TestDataType> cfg_a = {
@@ -271,11 +282,123 @@ void execute_ntt_multiply(
         };
         zero_pad_gpu(ctx.a_raw_dev, ctx.a_dev[i], ctx.L_A, ctx.N, ctx.stream_a);
         zero_pad_gpu(ctx.b_raw_dev, ctx.b_dev[i], ctx.L_B, ctx.N, ctx.stream_b);
+
+        #ifdef DEBUG
+        // verify zero pad
+        cudaStreamSynchronize(ctx.stream_a);
+        vector<uint32_t> zp(ctx.N);
+        cudaMemcpy(zp.data(), ctx.a_dev[i], ctx.N*sizeof(TestDataType), cudaMemcpyDeviceToHost);
+        printf("a_dev[%d] zero_padded: ", i);
+        for(int k=0;k<8;k++) printf("%u ",zp[k]); printf("\n");
+
+        cudaStreamSynchronize(ctx.stream_b);
+        cudaMemcpy(zp.data(), ctx.b_dev[i], ctx.N*sizeof(TestDataType), cudaMemcpyDeviceToHost);
+        printf("b_dev[%d] zero_padded: ", i);
+        for(int k=0;k<8;k++) printf("%u ",zp[k]); printf("\n");
+        #endif
+
+        #ifdef DEBUG
+        // compute CPU ntt
+        int logN = log2(static_cast<int>(ctx.N));
+
+        auto factors = generate_factors_for_N(logN);
+        NTTParameters<TestDataType> parameters(
+            logN,
+            factors[i],
+            ReductionPolynomial::X_N_minus
+        );
+
+        vector<TestDataType> host_a(ctx.N);
+        vector<TestDataType> host_b(ctx.N);
+
+        cudaMemcpy(
+            host_a.data(),
+            ctx.a_dev[i],
+            ctx.N * sizeof(TestDataType),
+            cudaMemcpyDeviceToHost
+        );
+
+        cudaMemcpy(
+            host_b.data(),
+            ctx.b_dev[i],
+            ctx.N * sizeof(TestDataType),
+            cudaMemcpyDeviceToHost
+        );
+
+        NTTCPU<TestDataType> generatora(parameters);
+        vector<TestDataType> cpu_ntt_result_a = generatora.ntt(host_a);
+
+        NTTCPU<TestDataType> generatorb(parameters);
+        vector<TestDataType> cpu_ntt_result_b = generatorb.ntt(host_b);
+
+        // cout << i << " :[CPU] Forward NTT result for a_dev: [ ";
+        // for (const auto& x : cpu_ntt_result_a)
+        //     cout << x << " ";
+        // cout << "]" << endl;
+
+        // cout << i << " :[CPU] Forward NTT result for b_dev: [ ";
+        // for (const auto& x : cpu_ntt_result_b)
+        //     cout << x << " ";
+        // cout << "]" << endl;
+        #endif
+
         GPU_NTT_Inplace(ctx.a_dev[i], ctx.forward_omega_dev[i],
                         ctx.modulus_dev[i], cfg_a, BATCH, 1);
 
         GPU_NTT_Inplace(ctx.b_dev[i], ctx.forward_omega_dev[i],
                         ctx.modulus_dev[i], cfg_b, BATCH, 1);
+
+        #ifdef DEBUG
+        vector<TestDataType> gpu_ntt_a(ctx.N);
+        vector<TestDataType> gpu_ntt_b(ctx.N);
+
+        cudaMemcpy(
+            gpu_ntt_a.data(),
+            ctx.a_dev[i],
+            ctx.N * sizeof(TestDataType),
+            cudaMemcpyDeviceToHost
+        );
+
+        cudaMemcpy(
+            gpu_ntt_b.data(),
+            ctx.b_dev[i],
+            ctx.N * sizeof(TestDataType),
+            cudaMemcpyDeviceToHost
+        );
+
+        bool match_a = true;
+        bool match_b = true;
+
+        for (size_t j = 0; j < ctx.N; j++) {
+            if (gpu_ntt_a[j] != cpu_ntt_result_a[j]) {
+                match_a = false;
+                printf("Mismatch A modulus %d index %zu : GPU=%llu CPU=%llu\n",
+                    i,
+                    j,
+                    (unsigned long long)gpu_ntt_a[j],
+                    (unsigned long long)cpu_ntt_result_a[j]);
+                break;
+            }
+        }
+
+        for (size_t j = 0; j < ctx.N; j++) {
+            if (gpu_ntt_b[j] != cpu_ntt_result_b[j]) {
+                match_b = false;
+                printf("Mismatch B modulus %d index %zu : GPU=%llu CPU=%llu\n",
+                    i,
+                    j,
+                    (unsigned long long)gpu_ntt_b[j],
+                    (unsigned long long)cpu_ntt_result_b[j]);
+                break;
+            }
+        }
+
+        if (match_a)
+            printf("[DEBUG] modulus %d : A NTT matched\n", i);
+
+        if (match_b)
+            printf("[DEBUG] modulus %d : B NTT matched\n", i);
+        #endif
     }
 
     cudaStreamSynchronize(ctx.stream_a);
@@ -311,12 +434,77 @@ void execute_ntt_multiply(
             .stream = ctx.stream_a
         };
 
+        #ifdef DEBUG
+        // pull pointwise multiplication result back before inverse transform
+        vector<TestDataType> freq_domain_product(ctx.N);
+
+        cudaMemcpy(
+            freq_domain_product.data(),
+            ctx.c_dev[i],
+            ctx.N * sizeof(TestDataType),
+            cudaMemcpyDeviceToHost
+        );
+
+        int logN = log2(static_cast<int>(ctx.N));
+
+        auto factors = generate_factors_for_N(logN);
+        NTTParameters<TestDataType> parameters(
+            logN,
+            factors[i],
+            ReductionPolynomial::X_N_minus
+        );
+
+        NTTCPU<TestDataType> cpu_generator(parameters);
+
+        vector<TestDataType> cpu_intt_result =
+            cpu_generator.intt(freq_domain_product);
+
+        cout << "[GPU] INTT output: [ ";
+        for (long unsigned int j = 0; j < parameters.n; j++) {
+            cout << static_cast<unsigned long long>(cpu_intt_result[j]) << " ";
+        }
+        cout << "]" << endl;
+        #endif
+
         GPU_INTT(ctx.c_dev[i],
                  ctx.c_dev[i],
                  ctx.inverse_omega_dev[i],
                  ctx.modulus_dev[i],
                  cfg_inv,
                  BATCH, 1);
+
+        #ifdef DEBUG
+        vector<TestDataType> gpu_intt_result(ctx.N);
+
+        cudaMemcpy(
+            gpu_intt_result.data(),
+            ctx.c_dev[i],
+            ctx.N * sizeof(TestDataType),
+            cudaMemcpyDeviceToHost
+        );
+
+        bool intt_match = true;
+
+        for (size_t j = 0; j < ctx.N; j++) {
+            if (gpu_intt_result[j] != cpu_intt_result[j]) {
+                intt_match = false;
+
+                printf(
+                    "INTT mismatch modulus %d index %zu : GPU=%llu CPU=%llu\n",
+                    i,
+                    j,
+                    (unsigned long long)gpu_intt_result[j],
+                    (unsigned long long)cpu_intt_result[j]
+                );
+
+                break;
+            }
+        }
+
+        if (intt_match) {
+            printf("[DEBUG] modulus %d : INTT matched\n", i);
+        }
+        #endif
     }
 
     cudaStreamSynchronize(ctx.stream_a);
@@ -327,8 +515,22 @@ void execute_ntt_multiply(
 
     timer.tic(ctx.stream_a);
 
+    vector<TestDataTypeUint*> c_dev_uint(NUM_MODULI);
+    for (int i = 0; i < NUM_MODULI; i++)
+        c_dev_uint[i] = (TestDataTypeUint*)ctx.c_dev[i];
+    upload_residue_ptrs(c_dev_uint);
+
     // ctx.c_dev[i] holds INTT results — pass directly to CRT, no host round-trip
     crt_combine_gpu(ctx.d_C_hi, ctx.d_C_lo, ctx.N);
+
+    #ifdef DEBUG
+    cudaDeviceSynchronize();
+    vector<uint64_t> chi(8), clo(8);
+    cudaMemcpy(chi.data(), ctx.d_C_hi, 8*sizeof(uint64_t), cudaMemcpyDeviceToHost);
+    cudaMemcpy(clo.data(), ctx.d_C_lo, 8*sizeof(uint64_t), cudaMemcpyDeviceToHost);
+    printf("crt_hi: "); for(int k=0;k<8;k++) printf("%llu ",chi[k]); printf("\n");
+    printf("crt_lo: "); for(int k=0;k<8;k++) printf("%llu ",clo[k]); printf("\n");
+    #endif
 
     #ifdef TIMING
     t_crt = timer.toc(ctx.stream_a);
