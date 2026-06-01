@@ -20,6 +20,7 @@ struct NTTContext {
     int logN;
 
     // inputs are always 32-bits
+    // changed from TestDataTypeUint to uint32_t
     uint32_t* a_raw_dev = nullptr;    // size L_A
     uint32_t* b_raw_dev = nullptr;    // size L_B
     size_t L_A = 0, L_B = 0;
@@ -38,6 +39,8 @@ struct NTTContext {
 
     uint64_t* d_C_hi;
     uint64_t* d_C_lo;
+
+    // changed from uint32_t to TestDataTypeUint
     TestDataTypeUint* d_out;
     int64_t*    d_seg_carry;
 };
@@ -58,7 +61,9 @@ NTTContext allocate_ntt_context(const NTTPrecomputed &pre, size_t L_A, size_t L_
 
 void execute_ntt_multiply(
 	NTTContext &ctx,
+    // changed from TestDataTypeUint to uint32_t
 	const uint32_t* a_pinned,
+    // changed from TestDataTypeUint to uint32_t
 	const uint32_t* b_pinned,
 	vector<TestDataTypeUint> &C_out,
 	__int128 M, __int128 M_half

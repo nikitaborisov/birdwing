@@ -104,18 +104,16 @@ __device__ __forceinline__ void mul_wide(T a, T b, T &lo, T &hi)
     }
 }
 
-__global__ void pointwise_mul_kernel(TestDataType* A,
-                                     TestDataType* B,
-                                     TestDataType* C,
+__global__ void pointwise_mul_kernel(TestDataTypeUint* A,
+                                     TestDataTypeUint* B,
+                                     TestDataTypeUint* C,
                                      TestDataTypeUint modulus,
                                      size_t N)
 {
     size_t idx = blockIdx.x * blockDim.x + threadIdx.x;
     if (idx < N) {
-        TestDataTypeUint a = (TestDataTypeUint)A[idx];
-        TestDataTypeUint b = (TestDataTypeUint)B[idx];
         TestDataTypeUint lo, hi;
-        mul_wide(a, b, lo, hi);
+        mul_wide(A[idx], B[idx], lo, hi);
 
         if constexpr (sizeof(TestDataTypeUint) == 4) {
             uint64_t full = ((uint64_t)hi << 32) | lo;
@@ -123,7 +121,7 @@ __global__ void pointwise_mul_kernel(TestDataType* A,
         } else {
             unsigned __int128 full =
                 ((unsigned __int128)hi << 64) | lo;
-            C[idx] = (TestDataType)(full % modulus);
+            C[idx] = (TestDataTypeUint)(full % modulus);
         }
     }
 }
@@ -331,15 +329,15 @@ void execute_ntt_multiply(
         NTTCPU<TestDataType> generatorb(parameters);
         vector<TestDataType> cpu_ntt_result_b = generatorb.ntt(host_b);
 
-        // cout << i << " :[CPU] Forward NTT result for a_dev: [ ";
-        // for (const auto& x : cpu_ntt_result_a)
-        //     cout << x << " ";
-        // cout << "]" << endl;
+        cout << i << " :[CPU] Forward NTT result for a_dev: [ ";
+        for (const auto& x : cpu_ntt_result_a)
+            cout << x << " ";
+        cout << "]" << endl;
 
-        // cout << i << " :[CPU] Forward NTT result for b_dev: [ ";
-        // for (const auto& x : cpu_ntt_result_b)
-        //     cout << x << " ";
-        // cout << "]" << endl;
+        cout << i << " :[CPU] Forward NTT result for b_dev: [ ";
+        for (const auto& x : cpu_ntt_result_b)
+            cout << x << " ";
+        cout << "]" << endl;
         #endif
 
         GPU_NTT_Inplace(ctx.a_dev[i], ctx.forward_omega_dev[i],
@@ -418,6 +416,25 @@ void execute_ntt_multiply(
     }
     #ifdef TIMING
     t_mul = timer.toc(ctx.stream_a);
+    #endif
+    
+    #ifdef DEBUG
+    // verify pointwise mul by printing c_dev
+    cudaStreamSynchronize(ctx.stream_a);
+    for (int i = 0; i < NUM_MODULI; i++) {
+        vector<TestDataType> freq_domain_product(ctx.N);
+        cudaMemcpy(
+            freq_domain_product.data(),
+            ctx.c_dev[i],
+            ctx.N * sizeof(TestDataType),
+            cudaMemcpyDeviceToHost
+        );
+        cout << "[GPU] Pointwise product for modulus " << i << ": [ ";
+        for (long unsigned int j = 0; j < ctx.N; j++) {
+            cout << static_cast<unsigned long long>(freq_domain_product[j]) << " ";
+        }
+        cout << "]" << endl;
+    }
     #endif
 
     timer.tic(ctx.stream_a);

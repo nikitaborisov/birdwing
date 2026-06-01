@@ -8,6 +8,7 @@
 __global__ void carry_intra_segment_kernel(
     const uint64_t* __restrict__ C_hi,
     const uint64_t* __restrict__ C_lo,
+    // changed from uint32_t to TestDataTypeUint
     TestDataTypeUint* __restrict__ out,
     int64_t*          __restrict__ seg_carry,
     size_t N,
@@ -54,6 +55,7 @@ __global__ void carry_inter_segment_kernel(
 // Pass 3: each block adds the incoming carry into its segment's limbs,
 // propagating within the segment if an addition overflows a limb.
 __global__ void carry_fixup_kernel(
+    // changed from uint32_t to TestDataTypeUint
     TestDataTypeUint* __restrict__ out,
     const int64_t*    __restrict__ seg_carry,
     size_t N)
@@ -68,8 +70,11 @@ __global__ void carry_fixup_kernel(
     if (incoming == 0) return;
 
     for (size_t i = seg_start; i < seg_end && incoming != 0; i++) {
+        // changed from int64_t to int128
         __int128 sum  = (__int128)out[i] + incoming;
+        // changed from uint32_t to TestDataTypeUint
         out[i]        = (TestDataTypeUint)(sum & LIMB_MASK);
+        // added cast to int64_t
         incoming      = (int64_t)(sum >> LIMB_BITS);
     }
 

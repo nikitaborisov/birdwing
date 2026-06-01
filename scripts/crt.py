@@ -163,7 +163,28 @@ def benchmark_crt(trials=50000):
     print(f"2-mod CRT: {t2:.3f} sec for {trials} trials, {t2/trials*1e6:.1f} µs per test")
     print(f"3-mod CRT: {t3:.3f} sec for {trials} trials, {t3/trials*1e6:.1f} µs per test")
 
-test_basic_cases()
-test_random_cases()
-test_edge_cases()
-benchmark_crt()
+# test_basic_cases()
+# test_random_cases()
+# test_edge_cases()
+# benchmark_crt()
+
+# paste your actual INTT residues here
+moduli = [0x23800001, 0x26800001, 0x2d000001]  # your 32-bit primes
+
+# INTT output for {1,2,3,4}*{5,6,7,8}, 8 coefficients, 3 moduli
+intt = [
+    [16183198, 590672222, 548256166, 60, 395770834, 4919015, 230972272, 0],  # mod p0
+    [457582892, 589476211, 94374669,  60, 631175278, 56446674, 108712927, 0],  # mod p1
+    [549073905, 554146478, 305529440, 60, 364677490, 200828311, 290668739, 0],  # mod p2
+]
+
+expected = [5, 16, 34, 60, 61, 52, 32, 0]
+
+print("CRT reconstruction of INTT residues:")
+for i in range(8):
+    rems = [intt[j][i] for j in range(3)]
+    x, M = crt(rems, moduli)
+    # center: if x > M/2, subtract M
+    if x > M // 2:
+        x -= M
+    print(f"  coeff[{i}]: got={x} expected={expected[i]} {'OK' if x == expected[i] else 'FAIL'}")
