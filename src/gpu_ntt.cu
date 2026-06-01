@@ -27,7 +27,7 @@ using namespace gpuntt;
     vector<TestDataTypeUint> moduli = {0x6723cbb800001, 0x6723cb6800001};
     vector<TestDataTypeUint> roots_of_unity_2_23 = {11, 6};
 #else
-    vector<TestDataTypeUint> moduli = {0x23800001, 0x26800001, 0x2d000001};
+    vector<TestDataTypeUint> moduli = {0x2d000001, 0x23800001, 0x26800001};
     vector<TestDataTypeUint> roots_of_unity_2_23 = {663, 721, 19};
 #endif
 
