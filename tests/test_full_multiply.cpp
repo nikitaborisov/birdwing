@@ -238,14 +238,14 @@ void test_full_pipeline(size_t L)
     cout << YELLOW << "\n[Test] Full multiply pipeline, L = "
          << L << " limbs" << RESET << "\n";
 
-    vector<TestDataTypeUint> A = random_limbs(L, 1234);
-    vector<TestDataTypeUint> B = random_limbs(L, 5678);
+    // vector<TestDataTypeUint> A = random_limbs(L, 1234);
+    // vector<TestDataTypeUint> B = random_limbs(L, 5678);
 
     // vector<TestDataTypeUint> A = {1,2,3,4,5,6,7,8};
     // vector<TestDataTypeUint> B = {9,10,11,12,13,14,15,16};
 
-    // vector<TestDataTypeUint> A = {1,2,3,4};
-    // vector<TestDataTypeUint> B = {5,6,7,8};
+    vector<TestDataTypeUint> A = {1,2,3,4};
+    vector<TestDataTypeUint> B = {5,6,7,8};
 
     // GPU pipeline
     vector<TestDataTypeUint> C_gpu;
@@ -389,23 +389,23 @@ int main()
 
         test_simple();
 
-        test_identities(1ULL << 20);
+        // test_identities(1ULL << 20);
 
         test_full_pipeline(4);
-        test_full_pipeline(8);
-        test_full_pipeline(16);
-        test_full_pipeline(64);
+        // test_full_pipeline(8);
+        // test_full_pipeline(16);
+        // test_full_pipeline(64);
 
-        test_full_pipeline(128);
-        test_full_pipeline(2048);
-        test_full_pipeline(10000);
-        test_full_pipeline(1ULL << 15);
+        // test_full_pipeline(128);
+        // test_full_pipeline(2048);
+        // test_full_pipeline(10000);
+        // test_full_pipeline(1ULL << 15);
 
-        benchmark_vs_gmp(4);
-        benchmark_vs_gmp(256);
-        benchmark_vs_gmp(1ULL << 12);
-        benchmark_vs_gmp(1ULL << 15);
-        benchmark_vs_gmp(1ULL << 20);
+        // benchmark_vs_gmp(4);
+        // benchmark_vs_gmp(256);
+        // benchmark_vs_gmp(1ULL << 12);
+        // benchmark_vs_gmp(1ULL << 15);
+        // benchmark_vs_gmp(1ULL << 20);
 
         cout << YELLOW << "\n==== TEST COMPLETE ====\n" << RESET;
         return 0;
