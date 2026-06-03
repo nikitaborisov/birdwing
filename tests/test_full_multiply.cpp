@@ -23,8 +23,8 @@ using namespace std;
 // ---------------- CPU REFERENCE MULTIPLY ----------------
 // Bigint schoolbook multiply with full carry
 vector<TestDataTypeUint> cpu_schoolbook_mul(
-    const vector<TestDataTypeUint>& A,
-    const vector<TestDataTypeUint>& B)
+    const vector<uint32_t>& A,
+    const vector<uint32_t>& B)
 {
     size_t n = A.size(), m = B.size();
     vector<unsigned __int128> tmp(n + m, 0);
@@ -56,16 +56,16 @@ vector<TestDataTypeUint> cpu_schoolbook_mul(
 }
 
 // ---------------- RANDOM INPUT GENERATOR ----------------
-vector<TestDataTypeUint> random_limbs(size_t n, uint64_t seed)
+vector<uint32_t> random_limbs(size_t n, uint64_t seed)
 {
     mt19937_64 rng(seed);
-    vector<TestDataTypeUint> v(n);
+    vector<uint32_t> v(n);
 
     for (size_t i = 0; i < n; i++) {
         if (i % 8 == 0) v[i] = 0; // edge case
         else if (i % 8 == 1) v[i] = 1;
         // else if (i % 8 == 2) v[i] = numeric_limits<TestDataTypeUint>::max();
-        else v[i] = (TestDataTypeUint)rng() % (1ULL << 30);
+        else v[i] = (uint32_t)rng() % (1ULL << 30);
     }
     return v;
 }
@@ -141,7 +141,10 @@ vector<TestDataTypeUint> from_mpz(const mpz_t x, size_t expected_limbs)
     return out;
 }
 
-void limbs_to_mpz(mpz_t result, const TestDataTypeUint* limbs, size_t n) {
+void limbs_to_mpz(mpz_t result,
+                  const uint32_t* limbs,
+                  size_t n)
+{
     mpz_import(result, n, -1, sizeof(TestDataTypeUint), 0, 0, limbs);
 }
 
@@ -167,8 +170,8 @@ vector<TestDataTypeUint> fast_from_mpz(mpz_t value, size_t expected_limbs)
 }
 
 vector<TestDataTypeUint> gmp_mul(
-    const vector<TestDataTypeUint>& A,
-    const vector<TestDataTypeUint>& B)
+    const vector<uint32_t>& A,
+    const vector<uint32_t>& B)
 {
     using clock = std::chrono::high_resolution_clock;
 
@@ -244,8 +247,8 @@ void test_full_pipeline(size_t L)
     // vector<TestDataTypeUint> A = {1,2,3,4,5,6,7,8};
     // vector<TestDataTypeUint> B = {9,10,11,12,13,14,15,16};
 
-    vector<TestDataTypeUint> A = {1,2,3,4};
-    vector<TestDataTypeUint> B = {5,6,7,8};
+    vector<uint32_t> A = {1,2,3,4};
+    vector<uint32_t> B = {5,6,7,8};
 
     // GPU pipeline
     vector<TestDataTypeUint> C_gpu;
@@ -267,8 +270,8 @@ void test_full_pipeline(size_t L)
 void test_simple() {
     chrono::duration<double, milli> dur;
     bool all_ok = true;
-    auto check = [&](const vector<TestDataTypeUint>& A,
-                     const vector<TestDataTypeUint>& B,
+    auto check = [&](const vector<uint32_t>& A,
+                     const vector<uint32_t>& B,
                      const string& label) {
         vector<TestDataTypeUint> C_gpu, C_ref;
         host_multiply_merge(A, B, C_gpu, dur);
@@ -284,8 +287,8 @@ void test_simple() {
 
 void test_identities(size_t L) {
     cout << YELLOW << "\n[Test] Identities, L = " << L << " limbs" << RESET << "\n";
-    vector<TestDataTypeUint> Z(L, 0);
-    vector<TestDataTypeUint> O(L, 1);
+    vector<uint32_t> Z(L, 0);
+    vector<uint32_t> O(L, 1);
     vector<TestDataTypeUint> R;
 
     chrono::duration<double, milli> duration;
@@ -300,13 +303,59 @@ void test_identities(size_t L) {
     cout << GREEN_BOLD << "[PASS] Identities correct\n" << RESET;
 }
 
+void test_root_of_unity(size_t L)
+{
+    cout << YELLOW
+         << "\n[Test] Root-of-unity probe, L = "
+         << L
+         << RESET << "\n";
+
+    vector<uint32_t> A(L, 0);
+    vector<uint32_t> B(L, 0);
+
+    // probe vector
+    A[1] = 1;
+
+    // neutral multiplier so A survives pipeline
+    B[0] = 1;
+
+    vector<TestDataTypeUint> C;
+    chrono::duration<double, milli> duration;
+
+    cout << "[INFO] Expect forward NTT of A to resemble:\n"
+     << "       [1, w, w^2, ...] up to output permutation\n"
+     << "       check debug logs for:\n"
+     << "       - first entry == 1\n"
+     << "       - -1 mod p appears somewhere\n"
+     << "       - entries appear distinct\n";
+
+    host_multiply_merge(A, B, C, duration);
+
+    // convolution identity sanity:
+    // multiplying by [1,0,0,...] should reproduce A
+    vector<TestDataTypeUint> expected(A.size() + B.size(), 0);
+    expected[1] = 1;
+
+    bool ok = compare_vectors(C, expected);
+
+    if (ok)
+        cout << GREEN_BOLD
+             << "[PASS] Root probe completed "
+             << "(inspect debug NTT output)"
+             << RESET << "\n";
+    else
+        cout << RED_BOLD
+             << "[FAIL] Root probe convolution incorrect"
+             << RESET << "\n";
+}
+
 // ---------------- BENCHMARK ----------------
 void benchmark_vs_gmp(size_t L)
 {
     cout << YELLOW << "\n[Benchmark] L = " << L << RESET << "\n";
 
-    vector<TestDataTypeUint> A = random_limbs(L, 1234);
-    vector<TestDataTypeUint> B = random_limbs(L, 5678);
+    vector<uint32_t> A = random_limbs(L, 1234);
+    vector<uint32_t> B = random_limbs(L, 5678);
 
     vector<TestDataTypeUint> C_gpu, C_gmp;
 
@@ -360,8 +409,8 @@ void benchmark_vs_gmp(size_t L)
 
 void profile_run(size_t L)
 {
-    vector<TestDataTypeUint> A = random_limbs(L, 1234);
-    vector<TestDataTypeUint> B = random_limbs(L, 5678);
+    vector<uint32_t> A = random_limbs(L, 1234);
+    vector<uint32_t> B = random_limbs(L, 5678);
     vector<TestDataTypeUint> C;
 
     chrono::duration<double, milli> duration;
@@ -390,6 +439,10 @@ int main()
         test_simple();
 
         // test_identities(1ULL << 20);
+
+        test_root_of_unity(8);
+        // test_root_of_unity(1024);
+        // test_root_of_unity(1ULL << 20);
 
         test_full_pipeline(4);
         // test_full_pipeline(8);

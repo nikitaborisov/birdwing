@@ -9,6 +9,10 @@
 #define LIMB_BITS 32   // default
 #endif
 
+#ifndef DEBUG
+#define DEBUG 0
+#endif
+
 #if LIMB_BITS == 64
 	using LimbType = uint64_t;
 	using TestDataTypeUint = uint64_t;

@@ -11,12 +11,11 @@ CUDA_PATH ?= /usr/local/cuda
 # Build flags
 # ================================================================
 
-CXXFLAGS := -std=c++17 -O3 -Wall -Wextra -DDEBUG=0
+CXXFLAGS := -std=c++17 -O3 -Wall -Wextra
 
 NVCCFLAGS := -std=c++17 -O3 -lineinfo \
              -Xcompiler -Wall \
              -Xcompiler -Wextra \
-             -DDEBUG=0
 
 ifdef PROFILE
     CXXFLAGS  += -DPROFILE -g
@@ -26,6 +25,11 @@ endif
 ifdef TIMING
     CXXFLAGS  += -DTIMING
     NVCCFLAGS += -DTIMING
+endif
+
+ifdef DEBUG
+    CXXFLAGS  += -DDEBUG -g
+    NVCCFLAGS += -DDEBUG -g -lineinfo
 endif
 
 # ================================================================

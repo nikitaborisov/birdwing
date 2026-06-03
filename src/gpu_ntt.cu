@@ -250,7 +250,7 @@ void execute_ntt_multiply(
                 ctx.L_B * sizeof(uint32_t),
                 cudaMemcpyHostToDevice, ctx.stream_b);
     
-    #ifdef DEBUG
+    #if DEBUG
     // verify inputs copied correctly
     cudaStreamSynchronize(ctx.stream_a);
     cudaStreamSynchronize(ctx.stream_b);
@@ -281,21 +281,21 @@ void execute_ntt_multiply(
         zero_pad_gpu(ctx.a_raw_dev, ctx.a_dev[i], ctx.L_A, ctx.N, ctx.stream_a);
         zero_pad_gpu(ctx.b_raw_dev, ctx.b_dev[i], ctx.L_B, ctx.N, ctx.stream_b);
 
-        #ifdef DEBUG
+        #if DEBUG
         // verify zero pad
         cudaStreamSynchronize(ctx.stream_a);
-        vector<uint32_t> zp(ctx.N);
-        cudaMemcpy(zp.data(), ctx.a_dev[i], ctx.N*sizeof(TestDataType), cudaMemcpyDeviceToHost);
+        vector<TestDataTypeUint> zp(ctx.N);
+        cudaMemcpy(zp.data(), ctx.a_dev[i], ctx.N*sizeof(TestDataTypeUint), cudaMemcpyDeviceToHost);
         printf("a_dev[%d] zero_padded: ", i);
         for(int k=0;k<8;k++) printf("%u ",zp[k]); printf("\n");
 
         cudaStreamSynchronize(ctx.stream_b);
-        cudaMemcpy(zp.data(), ctx.b_dev[i], ctx.N*sizeof(TestDataType), cudaMemcpyDeviceToHost);
+        cudaMemcpy(zp.data(), ctx.b_dev[i], ctx.N*sizeof(TestDataTypeUint), cudaMemcpyDeviceToHost);
         printf("b_dev[%d] zero_padded: ", i);
         for(int k=0;k<8;k++) printf("%u ",zp[k]); printf("\n");
         #endif
 
-        #ifdef DEBUG
+        #if DEBUG
         // compute CPU ntt
         int logN = log2(static_cast<int>(ctx.N));
 
@@ -346,7 +346,7 @@ void execute_ntt_multiply(
         GPU_NTT_Inplace(ctx.b_dev[i], ctx.forward_omega_dev[i],
                         ctx.modulus_dev[i], cfg_b, BATCH, 1);
 
-        #ifdef DEBUG
+        #if DEBUG
         vector<TestDataType> gpu_ntt_a(ctx.N);
         vector<TestDataType> gpu_ntt_b(ctx.N);
 
@@ -396,6 +396,26 @@ void execute_ntt_multiply(
 
         if (match_b)
             printf("[DEBUG] modulus %d : B NTT matched\n", i);
+
+        printf("midpoint value = %llu\n",
+            (unsigned long long)
+            gpu_ntt_a[gpu_ntt_a.size()/2]);
+
+        printf("expected -1 mod p = %llu\n",
+            (unsigned long long)
+            (moduli[i] - 1));
+        
+        bool found_minus_one = false;
+
+        for (size_t j = 0; j < gpu_ntt_a.size(); j++) {
+            if (gpu_ntt_a[j] == moduli[i] - 1) {
+                printf("-1 mod p found at index %zu\n", j);
+                found_minus_one = true;
+            }
+        }
+
+        if (!found_minus_one)
+            printf("-1 mod p not found in transform output\n");
         #endif
     }
 
@@ -418,7 +438,7 @@ void execute_ntt_multiply(
     t_mul = timer.toc(ctx.stream_a);
     #endif
     
-    #ifdef DEBUG
+    #if DEBUG
     // verify pointwise mul by printing c_dev
     cudaStreamSynchronize(ctx.stream_a);
     for (int i = 0; i < NUM_MODULI; i++) {
@@ -451,7 +471,7 @@ void execute_ntt_multiply(
             .stream = ctx.stream_a
         };
 
-        #ifdef DEBUG
+        #if DEBUG
         // pull pointwise multiplication result back before inverse transform
         vector<TestDataType> freq_domain_product(ctx.N);
 
@@ -490,7 +510,7 @@ void execute_ntt_multiply(
                  cfg_inv,
                  BATCH, 1);
 
-        #ifdef DEBUG
+        #if DEBUG
         vector<TestDataType> gpu_intt_result(ctx.N);
 
         cudaMemcpy(
@@ -540,7 +560,7 @@ void execute_ntt_multiply(
     // ctx.c_dev[i] holds INTT results — pass directly to CRT, no host round-trip
     crt_combine_gpu(ctx.d_C_hi, ctx.d_C_lo, ctx.N);
 
-    #ifdef DEBUG
+    #if DEBUG
     cudaDeviceSynchronize();
     vector<uint64_t> chi(8), clo(8);
     cudaMemcpy(chi.data(), ctx.d_C_hi, 8*sizeof(uint64_t), cudaMemcpyDeviceToHost);
