@@ -557,6 +557,26 @@ void execute_ntt_multiply(
         c_dev_uint[i] = (TestDataTypeUint*)ctx.c_dev[i];
     upload_residue_ptrs(c_dev_uint);
 
+    #if DEBUG
+    for (int mod = 0; mod < NUM_MODULI; mod++) {
+        vector<TestDataTypeUint> tmp(ctx.N);
+
+        cudaMemcpy(
+            tmp.data(),
+            ctx.c_dev[mod],
+            ctx.N*sizeof(TestDataTypeUint),
+            cudaMemcpyDeviceToHost
+        );
+
+        printf("Residues mod %d:\n", mod);
+
+        for (int k=0;k<8;k++)
+            printf("%llu ", (unsigned long long)tmp[k]);
+
+        printf("\n");
+    }
+    #endif
+
     // ctx.c_dev[i] holds INTT results — pass directly to CRT, no host round-trip
     crt_combine_gpu(ctx.d_C_hi, ctx.d_C_lo, ctx.N);
 
@@ -565,8 +585,36 @@ void execute_ntt_multiply(
     vector<uint64_t> chi(8), clo(8);
     cudaMemcpy(chi.data(), ctx.d_C_hi, 8*sizeof(uint64_t), cudaMemcpyDeviceToHost);
     cudaMemcpy(clo.data(), ctx.d_C_lo, 8*sizeof(uint64_t), cudaMemcpyDeviceToHost);
-    printf("crt_hi: "); for(int k=0;k<8;k++) printf("%llu ",chi[k]); printf("\n");
-    printf("crt_lo: "); for(int k=0;k<8;k++) printf("%llu ",clo[k]); printf("\n");
+
+    for (int k = 0; k < 8; k++) {
+        unsigned __int128 x =
+            ((unsigned __int128)chi[k] << 64) |
+            clo[k];
+
+        unsigned long long hi =
+            (unsigned long long)(x >> 64);
+
+        unsigned long long lo =
+            (unsigned long long)x;
+
+        printf("CRT[%d] = hi=%llu lo=%llu\n",
+            k, hi, lo);
+    }
+
+    unsigned long long M_hi =
+        (unsigned long long)(((__uint128_t)M) >> 64);
+
+    unsigned long long M_lo =
+        (unsigned long long)((__uint128_t)M);
+
+    unsigned long long MH_hi =
+        (unsigned long long)(((__uint128_t)M_half) >> 64);
+
+    unsigned long long MH_lo =
+        (unsigned long long)((__uint128_t)M_half);
+
+    printf("M      = (%llu,%llu)\n", M_hi, M_lo);
+    printf("M_half = (%llu,%llu)\n", MH_hi, MH_lo);
     #endif
 
     #ifdef TIMING

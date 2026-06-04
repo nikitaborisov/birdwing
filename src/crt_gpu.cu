@@ -24,11 +24,24 @@ void add128_128(uint64_t &hi, uint64_t &lo, uint64_t b_hi, uint64_t b_lo) {
 
 // (hi, lo) * scalar -> (hi, lo), safe because hi < 2^26 and scalar < 2^30
 __device__ __forceinline__
-void mul128_scalar(uint64_t &hi, uint64_t &lo, uint64_t b) {
-    uint64_t lo_hi = __umul64hi(lo, b);
-    uint64_t lo_lo = lo * b;
-    hi = hi * b + lo_hi;   // hi*b can't overflow: hi<2^26, b<2^30 -> product<2^56
-    lo = lo_lo;
+void mul128_scalar(uint64_t &hi, uint64_t &lo, uint64_t b)
+{
+    unsigned __int128 full_lo =
+        (unsigned __int128)lo * b;
+
+    unsigned __int128 full_hi =
+        (unsigned __int128)hi * b;
+
+    uint64_t new_lo = (uint64_t)full_lo;
+
+    uint64_t carry =
+        (uint64_t)(full_lo >> 64);
+
+    uint64_t new_hi =
+        (uint64_t)(full_hi + carry);
+
+    lo = new_lo;
+    hi = new_hi;
 }
 
 __device__ __forceinline__
