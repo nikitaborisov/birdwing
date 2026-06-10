@@ -25,7 +25,7 @@ using namespace gpuntt;
 #if LIMB_BITS == 64
     // 62-bit NTT-friendly primes: p = k * 2^M + 1, M >= 23
     vector<TestDataTypeUint> moduli = {0x6723cbb800001, 0x6723cb6800001};
-    vector<TestDataTypeUint> roots_of_unity_2_23 = {11, 6};
+    vector<TestDataTypeUint> roots_of_unity_2_23 = {622482970039944, 1317955505843176};
 #else
     vector<TestDataTypeUint> moduli = {0x2d000001, 0x23800001, 0x26800001};
     vector<TestDataTypeUint> roots_of_unity_2_23 = {663, 721, 19};
@@ -117,10 +117,12 @@ __global__ void pointwise_mul_kernel(TestDataTypeUint* A,
 
         if constexpr (sizeof(TestDataTypeUint) == 4) {
             uint64_t full = ((uint64_t)hi << 32) | lo;
+            // TODO fix this to use barrett
             C[idx] = (TestDataTypeUint)(full % modulus);
         } else {
             unsigned __int128 full =
                 ((unsigned __int128)hi << 64) | lo;
+            // TODO this probably needs to be not a direct mod but barrett
             C[idx] = (TestDataTypeUint)(full % modulus);
         }
     }
@@ -217,7 +219,7 @@ NTTContext allocate_ntt_context(const NTTPrecomputed &pre, size_t L_A, size_t L_
     cudaStreamCreate(&ctx.stream_a);
     cudaStreamCreate(&ctx.stream_b);
 
-    // upload_residue_ptrs(ctx.c_dev);
+    upload_residue_ptrs(ctx.c_dev);
 
     cudaDeviceSynchronize();
     return ctx;
@@ -482,7 +484,7 @@ void execute_ntt_multiply(
             cudaMemcpyDeviceToHost
         );
 
-        int logN = log2(static_cast<int>(ctx.N));
+        int logN = ctx.logN;
 
         auto factors = generate_factors_for_N(logN);
         NTTParameters<TestDataType> parameters(
@@ -551,11 +553,6 @@ void execute_ntt_multiply(
     #endif
 
     timer.tic(ctx.stream_a);
-
-    vector<TestDataTypeUint*> c_dev_uint(NUM_MODULI);
-    for (int i = 0; i < NUM_MODULI; i++)
-        c_dev_uint[i] = (TestDataTypeUint*)ctx.c_dev[i];
-    upload_residue_ptrs(c_dev_uint);
 
     #if DEBUG
     for (int mod = 0; mod < NUM_MODULI; mod++) {
