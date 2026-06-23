@@ -49,7 +49,6 @@ INCLUDES := \
     -Iinclude \
     -I$(CUDA_PATH)/include \
     -I$(HOME)/.local/include \
-    -I$(HOME)/CGBN/include \
     -I$(HOME)/GPU-NTT/src/include \
     -I$(HOME)/GPU-NTT/src/include/common \
     -I$(HOME)/GPU-NTT/src/include/ntt_merge
