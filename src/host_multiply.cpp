@@ -31,7 +31,7 @@ void host_multiply_merge(const vector<uint32_t> &A, const vector<uint32_t> &B, v
     while (N < L_C)
         N <<= 1;
 
-    ensure_ntt_size_supported(N);
+    ensure_multiply_size_supported(L_A, L_B);
 
     uint32_t* a_pinned;
     uint32_t* b_pinned;

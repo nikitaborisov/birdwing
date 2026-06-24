@@ -210,7 +210,7 @@ static void run_case(size_t L, uint64_t seed) {
 
     size_t L_C = A.size() + B.size() - 1;
     size_t N = padded_ntt_size(A.size(), B.size());
-    ensure_ntt_size_supported(N);
+    ensure_multiply_size_supported(A.size(), B.size());
 
     uint32_t* a_pinned = nullptr;
     uint32_t* b_pinned = nullptr;

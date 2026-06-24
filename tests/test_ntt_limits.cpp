@@ -122,6 +122,50 @@ static void test_configured_limits()
                  "max_supported_limb_count()==2^22");
 }
 
+static void test_crt_coefficient_bound()
+{
+    cout << "\n=== crt_coefficient_bound_satisfied ===\n";
+
+    string why;
+
+    const size_t L_ok = size_t(1) << 22;
+    check(crt_coefficient_bound_satisfied(L_ok, L_ok, &why),
+          "L=2^22 square multiply satisfies CRT bound");
+
+#if LIMB_BITS == 32
+    const size_t L_crt_only = size_t(1) << 23;
+    check(crt_coefficient_bound_satisfied(L_crt_only, L_crt_only, &why),
+          "L=2^23 satisfies CRT bound alone (32-bit moduli)");
+    const size_t L_bad = size_t(1) << 24;
+#else
+    const size_t L_bad = size_t(1) << 38;
+#endif
+    check(!crt_coefficient_bound_satisfied(L_bad, L_bad, &why),
+          "L exceeds CRT bound");
+    if (!crt_coefficient_bound_satisfied(L_bad, L_bad, &why)) {
+        check(why.find("CRT modulus product") != string::npos,
+              "CRT rejection message mentions modulus product");
+    }
+
+    check(crt_coefficient_bound_satisfied(L_bad, 1, &why),
+          "rectangular multiply: short operand keeps CRT bound small");
+}
+
+static void test_multiply_size_supported()
+{
+    cout << "\n=== multiply_size_supported ===\n";
+
+    string why;
+
+    const size_t L_ok = size_t(1) << 22;
+    check(multiply_size_supported(L_ok, L_ok, &why),
+          "L=2^22 square multiply supported");
+
+    const size_t L_bad = size_t(1) << 23;
+    check(!multiply_size_supported(L_bad, L_bad, &why),
+          "L=2^23 square multiply rejected (NTT and/or CRT)");
+}
+
 static void test_ntt_size_supported_accept()
 {
     cout << "\n=== ntt_size_supported (accept) ===\n";
@@ -180,13 +224,13 @@ static void test_l_arg_convention()
 
     const size_t L_ok = resolve_limb_count(22);
     check_eq_u64(L_ok, size_t(1) << 22, "L_arg=22 -> L=2^22");
-    check(ntt_size_supported(padded_ntt_size(L_ok, L_ok), &why),
-          "L_arg=22 fits in configured NTT limits");
+    check(multiply_size_supported(L_ok, L_ok, &why),
+          "L_arg=22 fits in configured multiply limits");
 
     const size_t L_bad = resolve_limb_count(23);
     check_eq_u64(L_bad, size_t(1) << 23, "L_arg=23 -> L=2^23");
-    check(!ntt_size_supported(padded_ntt_size(L_bad, L_bad), &why),
-          "L_arg=23 exceeds configured NTT limits");
+    check(!multiply_size_supported(L_bad, L_bad, &why),
+          "L_arg=23 exceeds configured multiply limits");
 }
 
 int main()
@@ -196,6 +240,8 @@ int main()
     test_max_logN_for_prime();
     test_max_root_logN();
     test_padded_ntt_size();
+    test_crt_coefficient_bound();
+    test_multiply_size_supported();
     test_configured_limits();
     test_ntt_size_supported_accept();
     test_ntt_size_supported_reject();

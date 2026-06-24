@@ -516,7 +516,7 @@ int main(int argc, char* argv[])
         const size_t L = resolve_limb_count(L_arg);
         const size_t N = padded_ntt_size(L, L);
         string why;
-        if (!ntt_size_supported(N, &why)) {
+        if (!multiply_size_supported(L, L, &why)) {
             cerr << "Skipping L_arg=" << L_arg << " (L=" << L
                  << ", N=" << N << "): " << why << "\n";
             continue;
