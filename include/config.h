@@ -40,5 +40,6 @@ using namespace std;
 
 // Collection of moduli used across the application
 extern vector<TestDataTypeUint> moduli;
+extern vector<TestDataTypeUint> roots_of_unity_max;
 
 #endif // CONFIG_H

@@ -1,5 +1,6 @@
 #include "../include/gpu_ntt.h"
 #include "../include/multiply.h"
+#include "../include/ntt_limits.h"
 #include "../include/crt.h"
 #include "../include/crt_utils.h"
 #include "../include/crt_gpu.h"
@@ -30,6 +31,8 @@ void host_multiply_merge(const vector<uint32_t> &A, const vector<uint32_t> &B, v
     size_t N = 1;
     while (N < L_C)
         N <<= 1;
+
+    ensure_ntt_size_supported(N);
 
     uint32_t* a_pinned;
     uint32_t* b_pinned;

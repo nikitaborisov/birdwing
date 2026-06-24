@@ -12,6 +12,7 @@
 
 #include "ntt.cuh"
 #include "config.h"
+#include "ntt_limits.h"
 
 using namespace std;
 using namespace gpuntt;
@@ -25,10 +26,10 @@ using namespace gpuntt;
 #if LIMB_BITS == 64
     // 62-bit NTT-friendly primes: p = k * 2^M + 1, M >= 23
     vector<TestDataTypeUint> moduli = {0x6723cbb800001, 0x6723cb6800001};
-    vector<TestDataTypeUint> roots_of_unity_2_23 = {622482970039944, 1317955505843176};
+    vector<TestDataTypeUint> roots_of_unity_max = {622482970039944, 1317955505843176};
 #else
     vector<TestDataTypeUint> moduli = {0x2d000001, 0x23800001, 0x26800001};
-    vector<TestDataTypeUint> roots_of_unity_2_23 = {663, 721, 19};
+    vector<TestDataTypeUint> roots_of_unity_max = {663, 721, 19};
 #endif
 
 struct GPUTimer {
@@ -68,13 +69,21 @@ static TestDataType mod_mul(TestDataTypeUint a, TestDataTypeUint b, TestDataType
 
 // helper to generate new factors table compatible with given N
 static array<NTTFactors<TestDataType>, NUM_MODULI> generate_factors_for_N(int logN) {
-    // we want the (2^logN - 1) and 2^logN th roots of unity from 2^23rd roots
     array<NTTFactors<TestDataType>, NUM_MODULI> new_factors;
     for (int i = 0; i < NUM_MODULI; i++) {
-        TestDataType root_2_23 = roots_of_unity_2_23[i];
-        // now need to square this root (23 - logN) times to get the 2^logN th root
-        TestDataType root_2_logN = root_2_23;
-        for (int j = 0; j < (23 - logN); j++) {
+        const int max_log = min(
+            max_logN_for_prime(moduli[i]),
+            max_root_logN(roots_of_unity_max[i], moduli[i]));
+
+        if (logN > max_log) {
+            cerr << "[NTT] logN=" << logN << " exceeds modulus " << i
+                 << " (p=" << moduli[i] << ", max 2^" << max_log << ")\n";
+            exit(1);
+        }
+
+        TestDataType root_max = roots_of_unity_max[i];
+        TestDataType root_2_logN = root_max;
+        for (int j = 0; j < (max_log - logN); j++) {
             root_2_logN = mod_mul(root_2_logN, root_2_logN, moduli[i]);
         }
         new_factors[i] = {moduli[i], root_2_logN, mod_mul(root_2_logN, root_2_logN, moduli[i])};
@@ -129,6 +138,8 @@ __global__ void pointwise_mul_kernel(TestDataTypeUint* A,
 }
 
 NTTPrecomputed precompute_ntt(size_t N) {
+    ensure_ntt_size_supported(N);
+
     NTTPrecomputed pre;
     pre.N    = N;
     pre.logN = (int)log2((double)N);

@@ -107,6 +107,41 @@ test_carry_prop: \
 	@$(TEST_BUILD)/test_carry_prop_64
 
 # ================================================================
+# ntt_limits dual-width tests
+# ================================================================
+
+NTT_LIMITS_SRC     := $(TEST_DIR)/test_ntt_limits.cpp
+NTT_LIMITS_OBJS    := $(OBJ_DIR)/ntt_limits_test.o $(OBJ_DIR)/ntt_limits.o
+
+$(OBJ_DIR)/ntt_limits_test.o: $(NTT_LIMITS_SRC) | $(OBJ_DIR)
+	$(CXX) $(CXXFLAGS) -DLIMB_BITS=32 $(INCLUDES) -c $< -o $@
+
+$(OBJ_DIR)/ntt_limits_test_64.o: $(NTT_LIMITS_SRC) | $(OBJ_DIR)
+	$(CXX) $(CXXFLAGS) -DLIMB_BITS=64 $(INCLUDES) -c $< -o $@
+
+$(OBJ_DIR)/ntt_limits_32.o: $(SRC_DIR)/ntt_limits.cpp | $(OBJ_DIR)
+	$(CXX) $(CXXFLAGS) -DLIMB_BITS=32 $(INCLUDES) -c $< -o $@
+
+$(OBJ_DIR)/ntt_limits_64.o: $(SRC_DIR)/ntt_limits.cpp | $(OBJ_DIR)
+	$(CXX) $(CXXFLAGS) -DLIMB_BITS=64 $(INCLUDES) -c $< -o $@
+
+$(TEST_BUILD)/test_ntt_limits_32: $(OBJ_DIR)/ntt_limits_test.o $(OBJ_DIR)/ntt_limits_32.o | $(TEST_BUILD)
+	$(CXX) $(CXXFLAGS) -DLIMB_BITS=32 $(INCLUDES) \
+		$^ -o $@
+
+$(TEST_BUILD)/test_ntt_limits_64: $(OBJ_DIR)/ntt_limits_test_64.o $(OBJ_DIR)/ntt_limits_64.o | $(TEST_BUILD)
+	$(CXX) $(CXXFLAGS) -DLIMB_BITS=64 $(INCLUDES) \
+		$^ -o $@
+
+test_ntt_limits: \
+	$(TEST_BUILD)/test_ntt_limits_32 \
+	$(TEST_BUILD)/test_ntt_limits_64
+	@echo "===== ntt_limits 32-bit ====="
+	@$(TEST_BUILD)/test_ntt_limits_32
+	@echo "===== ntt_limits 64-bit ====="
+	@$(TEST_BUILD)/test_ntt_limits_64
+
+# ================================================================
 # End-to-end dual-width builds
 # ================================================================
 
@@ -124,4 +159,4 @@ main_64: | $(OBJ_DIR)
 # Phony targets
 # ================================================================
 
-.PHONY: test test_zero_pad test_crt_gpu test_carry_prop main_32 main_64
+.PHONY: test test_zero_pad test_crt_gpu test_carry_prop test_ntt_limits main_32 main_64

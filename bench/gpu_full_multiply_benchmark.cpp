@@ -4,14 +4,18 @@
 // Precomputation and context allocation are done once per L, outside the
 // timed region. A short warmup precedes timed iterations.
 //
-// Build:  make bench_full
-// Run:    ./build/bench_full_multiply [--warmup N] [--iters N] [--csv FILE] [L ...]
+// Build:  make bench_full_32 | bench_full_64 | bench_full
+// Run:    ./build/bench_full_multiply_32 [--warmup N] [--iters N] [--csv FILE] [L ...]
+//         ./build/bench_full_multiply_64 ...
+//
+// Or use the runner:  python scripts/run_gpu_bench.py --limb-bits 64 16-24
 //
 // L spec: values < 64 mean 1<<L limbs; values >= 64 are literal limb counts.
 //         ranges are inclusive, e.g. 16-24 -> 16,17,...,24.
 
 #include "gpu_ntt.h"
 #include "config.h"
+#include "ntt_limits.h"
 
 #include <cuda_runtime.h>
 
@@ -30,6 +34,12 @@
 
 using namespace std;
 
+static bool file_nonempty(const string& path)
+{
+    ifstream f(path);
+    return f.good() && f.peek() != ifstream::traits_type::eof();
+}
+
 // ---------------------------------------------------------------------------
 // Defaults
 // ---------------------------------------------------------------------------
@@ -39,7 +49,7 @@ static constexpr int DEFAULT_ITERS  = 20;
 
 static const vector<size_t> DEFAULT_L_VALUES = {
     6, 7, 8, 9, 10, 11, 12, 13, 14, 15,
-    16, 17, 18, 19, 20, 21, 22, 23, 24, 25,
+    16, 17, 18, 19, 20, 21, 22,
 };
 
 // ---------------------------------------------------------------------------
@@ -67,15 +77,6 @@ static size_t resolve_limb_count(size_t L_arg)
     if (L_arg < 64)
         return size_t(1) << L_arg;
     return L_arg;
-}
-
-static size_t padded_ntt_size(size_t L_A, size_t L_B)
-{
-    size_t L_C = L_A + L_B - 1;
-    size_t N = 1;
-    while (N < L_C)
-        N <<= 1;
-    return N;
 }
 
 struct TimingStats {
@@ -123,13 +124,14 @@ struct BenchRow {
 static void usage(const char* prog)
 {
     cerr << "Usage: " << prog
-         << " [--warmup N] [--iters N] [--csv FILE] [L ...]\n"
+         << " [--warmup N] [--iters N] [--csv FILE] [--append] [L ...]\n"
          << "\n"
          << "  --warmup N   warmup iterations per L (default "
          << DEFAULT_WARMUP << ")\n"
          << "  --iters N    timed iterations per L (default "
          << DEFAULT_ITERS << ")\n"
          << "  --csv FILE   output CSV path (default gpu_multiply_bench.csv)\n"
+         << "  --append     append rows to CSV instead of overwriting\n"
          << "  L ...        limb spec: if L < 64, use 1<<L limbs; else L limbs\n"
          << "               ranges inclusive: 16-24 -> 16,17,...,24\n"
          << "               (default sweep: log2 sizes 6..25)\n";
@@ -230,15 +232,17 @@ static BenchRow benchmark_L(size_t L_arg, int warmup, int iters, uint64_t seed)
     return row;
 }
 
-static void write_csv(const string& path, const vector<BenchRow>& rows)
+static void write_csv(const string& path, const vector<BenchRow>& rows, bool append)
 {
-    ofstream csv(path, ios::trunc);
+    const bool write_header = !append || !file_nonempty(path);
+    ofstream csv(path, append ? ios::app : ios::trunc);
     if (!csv) {
         cerr << "Failed to open CSV: " << path << "\n";
         exit(1);
     }
 
-    csv << "limb_bits,L_arg,L,N,logN,warmup,iters,mean_ms,stddev_ms,min_ms,max_ms\n";
+    if (write_header)
+        csv << "limb_bits,L_arg,L,N,logN,warmup,iters,mean_ms,stddev_ms,min_ms,max_ms\n";
     csv << fixed << setprecision(6);
 
     for (const BenchRow& row : rows) {
@@ -279,6 +283,7 @@ int main(int argc, char* argv[])
     int warmup = DEFAULT_WARMUP;
     int iters = DEFAULT_ITERS;
     string csv_path = "gpu_multiply_bench.csv";
+    bool csv_append = false;
     vector<size_t> L_args;
 
     for (int i = 1; i < argc; i++) {
@@ -312,6 +317,10 @@ int main(int argc, char* argv[])
             csv_path = argv[++i];
             continue;
         }
+        if (arg == "--append") {
+            csv_append = true;
+            continue;
+        }
 
         if (!append_l_spec(arg, L_args)) {
             cerr << "Invalid limb spec: " << arg << "\n";
@@ -331,7 +340,9 @@ int main(int argc, char* argv[])
     cout << "GPU full multiply benchmark"
          << " (LIMB_BITS=" << LIMB_BITS
          << ", warmup=" << warmup
-         << ", iters=" << iters << ")\n";
+         << ", iters=" << iters
+         << ", max L_arg=" << (max_supported_logN() - 1)
+         << " / max L=" << max_supported_limb_count() << ")\n";
     cout << string(72, '-') << "\n";
 
     vector<BenchRow> rows;
@@ -340,6 +351,14 @@ int main(int argc, char* argv[])
     uint64_t seed = 1234;
     for (size_t L_arg : L_args) {
         const size_t L = resolve_limb_count(L_arg);
+        const size_t N = padded_ntt_size(L, L);
+        string why;
+        if (!ntt_size_supported(N, &why)) {
+            cerr << "Skipping L_arg=" << L_arg << " (L=" << L
+                 << ", N=" << N << "): " << why << "\n";
+            continue;
+        }
+
         cout << "Benchmarking L_arg=" << L_arg << " (L=" << L << ") ... " << flush;
         BenchRow row = benchmark_L(L_arg, warmup, iters, seed);
         seed += 17;
@@ -348,7 +367,7 @@ int main(int argc, char* argv[])
         print_row(row);
     }
 
-    write_csv(csv_path, rows);
+    write_csv(csv_path, rows, csv_append);
     cout << string(72, '-') << "\n";
     cout << "Wrote " << rows.size() << " rows to " << csv_path << "\n";
     return 0;
