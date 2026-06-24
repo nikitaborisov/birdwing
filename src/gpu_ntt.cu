@@ -25,7 +25,19 @@ using namespace gpuntt;
     typedef Data32 TestDataType;
 #endif
 
-#if LIMB_BITS == 64
+#if LIMB_BITS == 64 && defined(NATIVE_HOST_LIMBS)
+    // 64native: 3×59-bit RNS
+    vector<TestDataTypeUint> moduli = {
+        0x400002600000001ULL,
+        0x400004200000001ULL,
+        0x400001100000001ULL,
+    };
+    vector<TestDataTypeUint> roots_of_unity_max = {
+        273765203699653965ULL,
+        26231613454922890ULL,
+        144261359744151243ULL,
+    };
+#elif LIMB_BITS == 64
     // 59-bit NTT-friendly primes: p = k * 2^33 + 1
     vector<TestDataTypeUint> moduli = {0x400002600000001ULL, 0x400004200000001ULL};
     vector<TestDataTypeUint> roots_of_unity_max = {273765203699653965ULL, 26231613454922890ULL};
@@ -397,13 +409,25 @@ NTTContext allocate_ntt_context(const NTTPrecomputed &pre, size_t L_A, size_t L_
         cudaMalloc(&ctx.c_dev[i], p.n * sizeof(TestDataType));
     }
 
-    cudaMalloc(&ctx.a_raw_dev, L_A * sizeof(uint32_t));
-    cudaMalloc(&ctx.b_raw_dev, L_B * sizeof(uint32_t));
+    cudaMalloc(&ctx.a_raw_dev, L_A * sizeof(InputLimbType));
+    cudaMalloc(&ctx.b_raw_dev, L_B * sizeof(InputLimbType));
+#if defined(NATIVE_HOST_LIMBS)
+    cudaMalloc(&ctx.d_C_lo, pre.N * sizeof(uint64_t));
+    cudaMalloc(&ctx.d_C_mid, pre.N * sizeof(uint64_t));
+    cudaMalloc(&ctx.d_C_hi32, pre.N * sizeof(uint32_t));
+#else
     cudaMalloc(&ctx.d_C_hi, pre.N * sizeof(uint64_t));
     cudaMalloc(&ctx.d_C_lo, pre.N * sizeof(uint64_t));
+#endif
     cudaMalloc(&ctx.d_out,  (pre.N + 1) * sizeof(OutputLimbType));
     size_t num_segs = (pre.N + CARRY_SEG - 1) / CARRY_SEG;
+#if defined(NATIVE_HOST_LIMBS)
+    cudaMalloc(&ctx.d_seg_carry_lo, num_segs * sizeof(uint64_t));
+    cudaMalloc(&ctx.d_seg_carry_mid, num_segs * sizeof(uint64_t));
+    cudaMalloc(&ctx.d_seg_carry_hi, num_segs * sizeof(uint32_t));
+#else
     cudaMalloc(&ctx.d_seg_carry, num_segs * sizeof(int64_t));
+#endif
     cudaMalloc(&ctx.d_carry_escape, sizeof(int));
 
     cudaStreamCreate(&ctx.stream_a);
@@ -417,12 +441,14 @@ NTTContext allocate_ntt_context(const NTTPrecomputed &pre, size_t L_A, size_t L_
 
 void execute_ntt_multiply(
     NTTContext &ctx,
-    const uint32_t* a_pinned,
-    const uint32_t* b_pinned,
+    const InputLimbType* a_pinned,
+    const InputLimbType* b_pinned,
     vector<OutputLimbType> &C_out,
     NTTTiming* timing_out,
     vector<uint64_t>* crt_hi_out,
-    vector<uint64_t>* crt_lo_out)
+    vector<uint64_t>* crt_lo_out,
+    vector<uint64_t>* crt_mid_out,
+    vector<uint32_t>* crt_hi32_out)
 {
     const bool profile = timing_out != nullptr;
 #ifdef TIMING
@@ -440,10 +466,10 @@ void execute_ntt_multiply(
         cudaEventRecord(prof.h2d_start, ctx.stream_a);
 
     cudaMemcpyAsync(ctx.a_raw_dev, a_pinned,
-                ctx.L_A * sizeof(uint32_t),
+                ctx.L_A * sizeof(InputLimbType),
                 cudaMemcpyHostToDevice, ctx.stream_a);
     cudaMemcpyAsync(ctx.b_raw_dev, b_pinned,
-                ctx.L_B * sizeof(uint32_t),
+                ctx.L_B * sizeof(InputLimbType),
                 cudaMemcpyHostToDevice, ctx.stream_b);
 
     if (prof.on) {
@@ -457,11 +483,11 @@ void execute_ntt_multiply(
     // verify inputs copied correctly
     cudaStreamSynchronize(ctx.stream_a);
     cudaStreamSynchronize(ctx.stream_b);
-    vector<uint32_t> chk_a(ctx.L_A), chk_b(ctx.L_B);
-    cudaMemcpy(chk_a.data(), ctx.a_raw_dev, ctx.L_A*sizeof(uint32_t), cudaMemcpyDeviceToHost);
-    cudaMemcpy(chk_b.data(), ctx.b_raw_dev, ctx.L_B*sizeof(uint32_t), cudaMemcpyDeviceToHost);
-    printf("a_raw: "); for(auto x:chk_a) printf("%u ",x); printf("\n");
-    printf("b_raw: "); for(auto x:chk_b) printf("%u ",x); printf("\n");
+    vector<InputLimbType> chk_a(ctx.L_A), chk_b(ctx.L_B);
+    cudaMemcpy(chk_a.data(), ctx.a_raw_dev, ctx.L_A*sizeof(InputLimbType), cudaMemcpyDeviceToHost);
+    cudaMemcpy(chk_b.data(), ctx.b_raw_dev, ctx.L_B*sizeof(InputLimbType), cudaMemcpyDeviceToHost);
+    printf("a_raw: "); for(auto x:chk_a) printf("%llu ",(unsigned long long)x); printf("\n");
+    printf("b_raw: "); for(auto x:chk_b) printf("%llu ",(unsigned long long)x); printf("\n");
     #endif
 
     for (int i = 0; i < NUM_MODULI; i++) {
@@ -481,8 +507,13 @@ void execute_ntt_multiply(
             .zero_padding = false,
             .stream = ctx.stream_b
         };
+#if defined(NATIVE_HOST_LIMBS)
+        zero_pad_gpu_u64(ctx.a_raw_dev, ctx.a_dev[i], ctx.L_A, ctx.N, moduli[i], ctx.stream_a);
+        zero_pad_gpu_u64(ctx.b_raw_dev, ctx.b_dev[i], ctx.L_B, ctx.N, moduli[i], ctx.stream_b);
+#else
         zero_pad_gpu(ctx.a_raw_dev, ctx.a_dev[i], ctx.L_A, ctx.N, ctx.stream_a);
         zero_pad_gpu(ctx.b_raw_dev, ctx.b_dev[i], ctx.L_B, ctx.N, ctx.stream_b);
+#endif
 
         #if DEBUG
         // verify zero pad
@@ -778,9 +809,13 @@ void execute_ntt_multiply(
     #endif
 
     // ctx.c_dev[i] holds INTT results — pass directly to CRT, no host round-trip
+#if defined(NATIVE_HOST_LIMBS)
+    crt_combine_gpu_u160(ctx.d_C_lo, ctx.d_C_mid, ctx.d_C_hi32, ctx.N);
+#else
     crt_combine_gpu(ctx.d_C_hi, ctx.d_C_lo, ctx.N);
+#endif
 
-    #if DEBUG
+    #if DEBUG && !defined(NATIVE_HOST_LIMBS)
     cudaDeviceSynchronize();
     vector<uint64_t> chi(8), clo(8);
     cudaMemcpy(chi.data(), ctx.d_C_hi, 8*sizeof(uint64_t), cudaMemcpyDeviceToHost);
@@ -805,6 +840,29 @@ void execute_ntt_multiply(
     if (prof.on)
         timing.crt_ms = prof.crt_timer->toc(ctx.stream_a);
 
+#if defined(NATIVE_HOST_LIMBS)
+    if (crt_lo_out && crt_mid_out && crt_hi32_out) {
+        crt_lo_out->resize(ctx.N);
+        crt_mid_out->resize(ctx.N);
+        crt_hi32_out->resize(ctx.N);
+        cudaMemcpy(crt_lo_out->data(), ctx.d_C_lo, ctx.N * sizeof(uint64_t),
+                   cudaMemcpyDeviceToHost);
+        cudaMemcpy(crt_mid_out->data(), ctx.d_C_mid, ctx.N * sizeof(uint64_t),
+                   cudaMemcpyDeviceToHost);
+        cudaMemcpy(crt_hi32_out->data(), ctx.d_C_hi32, ctx.N * sizeof(uint32_t),
+                   cudaMemcpyDeviceToHost);
+
+        if (prof.on)
+            cudaEventRecord(prof.execute_stop, 0);
+
+        if (prof.on)
+            prof.fill(timing);
+
+        if (timing_out)
+            *timing_out = timing;
+        return;
+    }
+#else
     if (crt_hi_out && crt_lo_out) {
         crt_hi_out->resize(ctx.N);
         crt_lo_out->resize(ctx.N);
@@ -823,22 +881,40 @@ void execute_ntt_multiply(
             *timing_out = timing;
         return;
     }
+#endif
 
     if (prof.on)
         prof.carry_timer->tic(ctx.stream_a);
 
     size_t num_segs = (ctx.N + CARRY_SEG - 1) / CARRY_SEG;
 
+#if defined(NATIVE_HOST_LIMBS)
+    carry_intra_segment_kernel_u160<<<num_segs, 1, 0, ctx.stream_a>>>(
+        ctx.d_C_lo, ctx.d_C_mid, ctx.d_C_hi32, ctx.d_out,
+        ctx.d_seg_carry_lo, ctx.d_seg_carry_mid, ctx.d_seg_carry_hi, ctx.N);
+#else
     carry_intra_segment_kernel<<<num_segs, 1, 0, ctx.stream_a>>>(
         ctx.d_C_hi, ctx.d_C_lo, ctx.d_out, ctx.d_seg_carry, ctx.N);
+#endif
 
+#if defined(NATIVE_HOST_LIMBS)
+    carry_inter_segment_kernel_u160<<<1, 1, 0, ctx.stream_a>>>(
+        ctx.d_seg_carry_lo, ctx.d_seg_carry_mid, ctx.d_seg_carry_hi, num_segs);
+#else
     carry_inter_segment_kernel<<<1, 1, 0, ctx.stream_a>>>(
         ctx.d_seg_carry, num_segs);
+#endif
 
     for (;;) {
         cudaMemsetAsync(ctx.d_carry_escape, 0, sizeof(int), ctx.stream_a);
+#if defined(NATIVE_HOST_LIMBS)
+        carry_fixup_kernel_u160<<<num_segs, 1, 0, ctx.stream_a>>>(
+            ctx.d_out, ctx.d_seg_carry_lo, ctx.d_seg_carry_mid, ctx.d_seg_carry_hi,
+            ctx.N, num_segs, ctx.d_carry_escape);
+#else
         carry_fixup_kernel<<<num_segs, 1, 0, ctx.stream_a>>>(
             ctx.d_out, ctx.d_seg_carry, ctx.N, num_segs, ctx.d_carry_escape);
+#endif
         int escaped = 0;
         cudaMemcpyAsync(&escaped, ctx.d_carry_escape, sizeof(int),
                         cudaMemcpyDeviceToHost, ctx.stream_a);
@@ -906,10 +982,22 @@ void cleanup_ntt_context(NTTContext &ctx) {
     cudaStreamDestroy(ctx.stream_b);
     cudaFree(ctx.a_raw_dev);
     cudaFree(ctx.b_raw_dev);
+#if defined(NATIVE_HOST_LIMBS)
+    cudaFree(ctx.d_C_lo);
+    cudaFree(ctx.d_C_mid);
+    cudaFree(ctx.d_C_hi32);
+#else
     cudaFree(ctx.d_C_hi);
     cudaFree(ctx.d_C_lo);
+#endif
     cudaFree(ctx.d_out);
+#if defined(NATIVE_HOST_LIMBS)
+    cudaFree(ctx.d_seg_carry_lo);
+    cudaFree(ctx.d_seg_carry_mid);
+    cudaFree(ctx.d_seg_carry_hi);
+#else
     cudaFree(ctx.d_seg_carry);
+#endif
     cudaFree(ctx.d_carry_escape);
 }
 

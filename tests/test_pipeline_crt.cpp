@@ -34,6 +34,10 @@ static double ms_since(const Clock::time_point& t0) {
     return chrono::duration<double, milli>(Clock::now() - t0).count();
 }
 
+static constexpr size_t SCHOOLBOOK_N_MAX = 4096;
+
+#if !defined(NATIVE_HOST_LIMBS)
+
 static vector<uint32_t> random_limbs(size_t n, uint64_t seed) {
     mt19937_64 rng(seed);
     vector<uint32_t> v(n);
@@ -202,8 +206,6 @@ static void report_peak_coeff(const vector<u128>& cpu, size_t L_C, const char* l
 }
 
 // Schoolbook is O(N^2); use NTT CPU ref once N is large.
-static constexpr size_t SCHOOLBOOK_N_MAX = 4096;
-
 static void run_case(size_t L, uint64_t seed) {
     vector<uint32_t> A = random_limbs(L, seed);
     vector<uint32_t> B = random_limbs(L, seed + 1);
@@ -263,8 +265,7 @@ int main() {
 #if LIMB_BITS != 64
     printf("SKIP: this test targets the 64-bit pipeline\n");
     return 0;
-#endif
-
+#else
     run_case(4, 100);
     run_case(8, 200);
     run_case(64, 300);
@@ -273,4 +274,238 @@ int main() {
 
     printf("\n%d passed, %d failed\n", passed, failed);
     return failed > 0 ? 1 : 0;
+#endif
 }
+
+#else // NATIVE_HOST_LIMBS
+
+#include "../include/wide_int.h"
+
+static vector<uint64_t> random_limbs_u64(size_t n, uint64_t seed, bool narrow) {
+    mt19937_64 rng(seed);
+    vector<uint64_t> v(n);
+    for (size_t i = 0; i < n; i++) {
+        if (narrow)
+            v[i] = rng() % (1ULL << 30);
+        else if (i % 8 == 0)
+            v[i] = 0;
+        else if (i % 8 == 1)
+            v[i] = 1;
+        else if (i % 8 == 2)
+            v[i] = UINT64_MAX;
+        else
+            v[i] = rng();
+    }
+    return v;
+}
+
+static U160 host_crt_reference_u160(
+    const uint64_t* residues,
+    const vector<uint64_t>& primes)
+{
+    U160 x{0, 0, 0};
+    uint64_t M_hi = 0, M_lo = 1;
+    uint64_t x_mod[NUM_MODULI] = {};
+
+    auto mulmod = [](uint64_t a, uint64_t b, uint64_t p) -> uint64_t {
+        return (uint64_t)(((unsigned __int128)a * b) % p);
+    };
+    auto modinv = [](uint64_t a, uint64_t m) -> uint64_t {
+        int64_t old_r = a, r = m;
+        int64_t old_s = 1, s = 0;
+        while (r != 0) {
+            int64_t q = old_r / r;
+            int64_t tmp = r; r = old_r - q * r; old_r = tmp;
+            tmp = s; s = old_s - q * s; old_s = tmp;
+        }
+        return (uint64_t)((old_s % (int64_t)m + m) % m);
+    };
+
+    for (int j = 0; j < NUM_MODULI; j++) {
+        uint64_t p = primes[j];
+        uint64_t r = residues[j];
+        unsigned __int128 Mprefix = ((unsigned __int128)M_hi << 64) | M_lo;
+        uint64_t inv = (j == 0) ? 1ULL : modinv((uint64_t)(Mprefix % p), p);
+
+        uint64_t x_mod_p = x_mod[j];
+        uint64_t t = (r >= x_mod_p) ? (r - x_mod_p) : (r + p - x_mod_p);
+        uint64_t k_j = mulmod(t, inv, p);
+
+        for (int k = j + 1; k < NUM_MODULI; k++) {
+            uint64_t pk = primes[k];
+            uint64_t contrib = mulmod((uint64_t)(Mprefix % pk), k_j, pk);
+            x_mod[k] += contrib;
+            if (x_mod[k] >= pk) x_mod[k] -= pk;
+        }
+
+        uint64_t tmp_lo, tmp_mid;
+        uint32_t tmp_hi;
+        mul128x64_host(M_hi, M_lo, k_j, tmp_lo, tmp_mid, tmp_hi);
+        add160_host(x, tmp_lo, tmp_mid, tmp_hi);
+
+        unsigned __int128 Mfull = ((unsigned __int128)M_hi << 64) | M_lo;
+        Mfull *= p;
+        M_lo = (uint64_t)Mfull;
+        M_hi = (uint64_t)(Mfull >> 64);
+    }
+    return x;
+}
+
+static void add_u160(U160& a, const U160& b) {
+    add160_host(a, b.lo, b.mid, b.hi);
+}
+
+static U160 mul_u64_u64(uint64_t a, uint64_t b) {
+    unsigned __int128 p = (unsigned __int128)a * b;
+    U160 out{(uint64_t)p, (uint64_t)(p >> 64), 0};
+    return out;
+}
+
+static vector<U160> cpu_convolution_schoolbook_u64(
+    const vector<uint64_t>& A,
+    const vector<uint64_t>& B,
+    size_t N)
+{
+    vector<U160> a(N, {0, 0, 0}), b(N, {0, 0, 0});
+    for (size_t i = 0; i < A.size(); i++) a[i] = U160{A[i], 0, 0};
+    for (size_t i = 0; i < B.size(); i++) b[i] = U160{B[i], 0, 0};
+
+    vector<U160> c(N, {0, 0, 0});
+    for (size_t i = 0; i < A.size(); i++) {
+        for (size_t j = 0; j < B.size(); j++) {
+            if (i + j < N) {
+                U160 prod = mul_u64_u64(A[i], B[j]);
+                add_u160(c[i + j], prod);
+            }
+        }
+    }
+    return c;
+}
+
+static vector<U160> cpu_convolution_ntt_u64(
+    const vector<uint64_t>& A,
+    const vector<uint64_t>& B,
+    size_t N,
+    const NTTPrecomputed& pre)
+{
+    vector<vector<uint64_t>> residues(NUM_MODULI, vector<uint64_t>(N));
+    vector<uint64_t> primes(NUM_MODULI);
+    for (int m = 0; m < NUM_MODULI; m++)
+        primes[m] = moduli[m];
+
+    for (int m = 0; m < NUM_MODULI; m++) {
+        vector<TestDataType> a(N, 0), b(N, 0);
+        for (size_t i = 0; i < A.size(); i++)
+            a[i] = static_cast<TestDataType>(A[i] % moduli[m]);
+        for (size_t i = 0; i < B.size(); i++)
+            b[i] = static_cast<TestDataType>(B[i] % moduli[m]);
+
+        NTTCPU<TestDataType> ntt(pre.params[m]);
+        auto fa = ntt.ntt(a);
+        auto fb = ntt.ntt(b);
+        auto prod = ntt.mult(fa, fb);
+        auto inv = ntt.intt(prod);
+        for (size_t k = 0; k < N; k++)
+            residues[m][k] = static_cast<uint64_t>(inv[k]);
+    }
+
+    vector<U160> out(N, {0, 0, 0});
+    uint64_t r[NUM_MODULI];
+    for (size_t k = 0; k < N; k++) {
+        for (int m = 0; m < NUM_MODULI; m++)
+            r[m] = residues[m][k];
+        out[k] = host_crt_reference_u160(r, primes);
+    }
+    return out;
+}
+
+static bool compare_crt_u160_to_cpu(
+    const vector<uint64_t>& gpu_lo,
+    const vector<uint64_t>& gpu_mid,
+    const vector<uint32_t>& gpu_hi,
+    const vector<U160>& cpu,
+    size_t L_C,
+    const char* label)
+{
+    size_t mismatch = 0;
+    for (size_t k = 0; k < L_C; k++) {
+        U160 gpu_val{gpu_lo[k], gpu_mid[k], gpu_hi[k]};
+        if (!u160_eq(gpu_val, cpu[k])) {
+            if (mismatch < 4) {
+                printf("  [%s] coeff %zu: GPU=(%llu,%llu,%u) CPU=(%llu,%llu,%u)\n",
+                       label, k,
+                       (unsigned long long)gpu_val.lo,
+                       (unsigned long long)gpu_val.mid,
+                       gpu_val.hi,
+                       (unsigned long long)cpu[k].lo,
+                       (unsigned long long)cpu[k].mid,
+                       cpu[k].hi);
+            }
+            mismatch++;
+        }
+    }
+    if (mismatch > 4)
+        printf("  [%s] ... %zu more mismatches\n", label, mismatch - 4);
+    return mismatch == 0;
+}
+
+static void run_case_native(size_t L, uint64_t seed, bool narrow) {
+    vector<uint64_t> A = random_limbs_u64(L, seed, narrow);
+    vector<uint64_t> B = random_limbs_u64(L, seed + 1, narrow);
+
+    size_t L_C = A.size() + B.size() - 1;
+    size_t N = padded_ntt_size(A.size(), B.size());
+    ensure_multiply_size_supported(A.size(), B.size());
+
+    uint64_t* a_pinned = nullptr;
+    uint64_t* b_pinned = nullptr;
+    cudaMallocHost(&a_pinned, A.size() * sizeof(uint64_t));
+    cudaMallocHost(&b_pinned, B.size() * sizeof(uint64_t));
+    memcpy(a_pinned, A.data(), A.size() * sizeof(uint64_t));
+    memcpy(b_pinned, B.data(), B.size() * sizeof(uint64_t));
+
+    auto t_pre = Clock::now();
+    NTTPrecomputed pre = precompute_ntt(N);
+    upload_ntt_precomputed(pre);
+    NTTContext ctx = allocate_ntt_context(pre, A.size(), B.size());
+    printf("  L=%zu N=%zu precompute+alloc: %.1f ms\n", L, N, ms_since(t_pre));
+
+    vector<uint64_t> gpu_lo, gpu_mid;
+    vector<uint32_t> gpu_hi;
+    vector<OutputLimbType> dummy_out;
+    auto t_gpu = Clock::now();
+    execute_ntt_multiply(ctx, a_pinned, b_pinned, dummy_out,
+                         nullptr, nullptr, &gpu_lo, &gpu_mid, &gpu_hi);
+    printf("  L=%zu GPU through CRT: %.1f ms\n", L, ms_since(t_gpu));
+
+    char label[64];
+    snprintf(label, sizeof(label), "L=%zu", L);
+
+    vector<U160> cpu;
+    auto t_cpu = Clock::now();
+    cpu = cpu_convolution_ntt_u64(A, B, N, pre);
+    printf("  L=%zu CPU NTT+CRT (U160): %.1f ms\n", L, ms_since(t_cpu));
+
+    bool ok = compare_crt_u160_to_cpu(gpu_lo, gpu_mid, gpu_hi, cpu, L_C, label);
+    check(label, ok);
+
+    cleanup_ntt_context(ctx);
+    cleanup_ntt_precomputed(pre);
+    cudaFreeHost(a_pinned);
+    cudaFreeHost(b_pinned);
+}
+
+int main() {
+    printf("=== pipeline CRT vs CPU convolution (64native, U160) ===\n");
+
+    run_case_native(4, 100, false);
+    run_case_native(8, 200, false);
+    run_case_native(64, 300, false);
+    run_case_native(256, 400, true);
+    run_case_native(1ULL << 15, 600, true);
+
+    printf("\n%d passed, %d failed\n", passed, failed);
+    return failed > 0 ? 1 : 0;
+}
+
+#endif // NATIVE_HOST_LIMBS

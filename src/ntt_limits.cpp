@@ -63,9 +63,19 @@ static unsigned __int128 crt_modulus_product()
     return M;
 }
 
+static long double crt_modulus_product_ld()
+{
+    long double M = 1.0L;
+    for (int i = 0; i < NUM_MODULI; i++)
+        M *= (long double)moduli[i];
+    return M;
+}
+
 static unsigned __int128 host_limb_product_sq()
 {
-    const uint64_t limb_max = OUTPUT_LIMB_MASK;
+    const uint64_t limb_max = (INPUT_LIMB_BITS == 64)
+        ? UINT64_MAX
+        : (uint64_t)OUTPUT_LIMB_MASK;
     return (unsigned __int128)limb_max * limb_max;
 }
 
@@ -73,6 +83,24 @@ static unsigned __int128 max_convolution_coefficient(size_t L_A, size_t L_B)
 {
     const size_t terms = min(L_A, L_B);
     return (unsigned __int128)terms * host_limb_product_sq();
+}
+
+static long double max_convolution_coefficient_ld(size_t L_A, size_t L_B)
+{
+    const long double terms = (long double)min(L_A, L_B);
+    const long double limb_max = (INPUT_LIMB_BITS == 64)
+        ? (long double)UINT64_MAX
+        : (long double)OUTPUT_LIMB_MASK;
+    return terms * limb_max * limb_max;
+}
+
+static bool crt_bounds_use_long_double()
+{
+#if INPUT_LIMB_BITS == 64
+    return true;
+#else
+    return false;
+#endif
 }
 
 static bool ntt_logN_supported(int logN, string* why)
@@ -125,6 +153,15 @@ size_t padded_ntt_size(size_t L_A, size_t L_B)
 
 static size_t max_limb_count_by_crt()
 {
+    if (crt_bounds_use_long_double()) {
+        const long double M = crt_modulus_product_ld();
+        const long double limb_sq = (long double)UINT64_MAX * (long double)UINT64_MAX;
+        const long double max_L = M / limb_sq;
+        if (max_L > (long double)numeric_limits<size_t>::max())
+            return numeric_limits<size_t>::max();
+        return static_cast<size_t>(max_L);
+    }
+
     const unsigned __int128 M = crt_modulus_product();
     const unsigned __int128 limb_sq = host_limb_product_sq();
     if (limb_sq == 0)
@@ -154,16 +191,23 @@ bool crt_coefficient_bound_satisfied(size_t L_A, size_t L_B, string* why)
         return false;
     }
 
-    const unsigned __int128 coeff_max = max_convolution_coefficient(L_A, L_B);
-    const unsigned __int128 M = crt_modulus_product();
-    if (coeff_max < M)
-        return true;
+    if (crt_bounds_use_long_double()) {
+        const long double coeff_max = max_convolution_coefficient_ld(L_A, L_B);
+        const long double M = crt_modulus_product_ld();
+        if (coeff_max < M)
+            return true;
+    } else {
+        const unsigned __int128 coeff_max = max_convolution_coefficient(L_A, L_B);
+        const unsigned __int128 M = crt_modulus_product();
+        if (coeff_max < M)
+            return true;
+    }
 
     if (why) {
         *why = "max convolution coefficient for L_A=" + to_string(L_A) +
                ", L_B=" + to_string(L_B) +
                " (terms=" + to_string(min(L_A, L_B)) +
-               ", limb=" + to_string(OUTPUT_LIMB_BITS) +
+               ", limb=" + to_string(INPUT_LIMB_BITS) +
                "-bit) exceeds CRT modulus product";
     }
     return false;

@@ -3,11 +3,12 @@
 // Benchmark the full GPU multiply pipeline with setup/teardown and per-stage
 // CUDA event timings from execute_ntt_multiply().
 //
-// Build:  make bench_full_32 | bench_full_64 | bench_full
+// Build:  make bench_full_32 | bench_full_64 | bench_full_64native | bench_full
 // Run:    ./build/bench_full_multiply_32 [--warmup N] [--iters N] [--csv FILE] [L ...]
 //         ./build/bench_full_multiply_64 ...
+//         ./build/bench_full_multiply_64native ...
 //
-// Or use the runner:  python scripts/run_gpu_bench.py --limb-bits 64 16-24
+// Or use the runner:  python scripts/run_gpu_bench.py --limb-bits 64native 16-24
 //
 // L spec: values < 64 mean 1<<L limbs; values >= 64 are literal limb counts.
 //         ranges are inclusive, e.g. 16-24 -> 16,17,...,24.
@@ -55,6 +56,29 @@ static const vector<size_t> DEFAULT_L_VALUES = {
 // Helpers
 // ---------------------------------------------------------------------------
 
+#if defined(NATIVE_HOST_LIMBS)
+
+static vector<uint64_t> random_limbs_u64(size_t n, uint64_t seed, bool narrow)
+{
+    mt19937_64 rng(seed);
+    vector<uint64_t> v(n);
+    for (size_t i = 0; i < n; i++) {
+        if (narrow)
+            v[i] = rng() % (1ULL << 30);
+        else if (i % 8 == 0)
+            v[i] = 0;
+        else if (i % 8 == 1)
+            v[i] = 1;
+        else if (i % 8 == 2)
+            v[i] = UINT64_MAX;
+        else
+            v[i] = rng();
+    }
+    return v;
+}
+
+#else
+
 static vector<uint32_t> random_limbs(size_t n, uint64_t seed)
 {
     mt19937_64 rng(seed);
@@ -70,6 +94,8 @@ static vector<uint32_t> random_limbs(size_t n, uint64_t seed)
     }
     return v;
 }
+
+#endif
 
 static size_t resolve_limb_count(size_t L_arg)
 {
@@ -248,6 +274,21 @@ static BenchRow benchmark_L(size_t L_arg, int warmup, int iters, uint64_t seed)
     const size_t N = padded_ntt_size(L_A, L_B);
     const int logN = static_cast<int>(lround(log2(static_cast<double>(N))));
 
+#if defined(NATIVE_HOST_LIMBS)
+    vector<uint64_t> A = random_limbs_u64(L_A, seed, false);
+    vector<uint64_t> B = random_limbs_u64(L_B, seed + 1, false);
+
+    uint64_t* a_pinned = nullptr;
+    uint64_t* b_pinned = nullptr;
+
+    SetupTiming setup{};
+    setup.pinned_ms = time_host_ms([&] {
+        cudaMallocHost(&a_pinned, L_A * sizeof(uint64_t));
+        cudaMallocHost(&b_pinned, L_B * sizeof(uint64_t));
+        memcpy(a_pinned, A.data(), L_A * sizeof(uint64_t));
+        memcpy(b_pinned, B.data(), L_B * sizeof(uint64_t));
+    });
+#else
     vector<uint32_t> A = random_limbs(L_A, seed);
     vector<uint32_t> B = random_limbs(L_B, seed + 1);
 
@@ -261,6 +302,7 @@ static BenchRow benchmark_L(size_t L_arg, int warmup, int iters, uint64_t seed)
         memcpy(a_pinned, A.data(), L_A * sizeof(uint32_t));
         memcpy(b_pinned, B.data(), L_B * sizeof(uint32_t));
     });
+#endif
 
     NTTPrecomputed pre{};
     PrecomputeTiming pre_timing{};

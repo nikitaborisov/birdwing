@@ -52,13 +52,22 @@ $(TEST_BUILD)/test_zero_pad_64: $(ZP_SRC) $(ZP_SRCS_DEP) | $(TEST_BUILD) $(GPU_N
 	$(NVCC) $(NVCCFLAGS) -DLIMB_BITS=64 $(INCLUDES) \
 		$^ -o $@ $(LIB_PATHS) $(LIBS)
 
+NATIVE_FLAGS := -DLIMB_BITS=64 -DNATIVE_HOST_LIMBS
+
+$(TEST_BUILD)/test_zero_pad_64native: $(ZP_SRC) $(ZP_SRCS_DEP) | $(TEST_BUILD) $(GPU_NTT_LIB)
+	$(NVCC) $(NVCCFLAGS) $(NATIVE_FLAGS) $(INCLUDES) \
+		$^ -o $@ $(LIB_PATHS) $(LIBS)
+
 test_zero_pad: \
 	$(TEST_BUILD)/test_zero_pad_32 \
-	$(TEST_BUILD)/test_zero_pad_64
+	$(TEST_BUILD)/test_zero_pad_64 \
+	$(TEST_BUILD)/test_zero_pad_64native
 	@echo "===== zero_pad 32-bit ====="
 	@$(TEST_BUILD)/test_zero_pad_32
 	@echo "===== zero_pad 64-bit ====="
 	@$(TEST_BUILD)/test_zero_pad_64
+	@echo "===== zero_pad 64native ====="
+	@$(TEST_BUILD)/test_zero_pad_64native
 
 # ================================================================
 # crt_gpu dual-width tests
@@ -75,13 +84,20 @@ $(TEST_BUILD)/test_crt_gpu_64: $(CRT_SRC) $(CRT_SRCS_DEP) | $(TEST_BUILD) $(GPU_
 	$(NVCC) $(NVCCFLAGS) -DLIMB_BITS=64 $(INCLUDES) \
 		$^ -o $@ $(LIB_PATHS) $(LIBS)
 
+$(TEST_BUILD)/test_crt_gpu_64native: $(CRT_SRC) $(CRT_SRCS_DEP) | $(TEST_BUILD) $(GPU_NTT_LIB)
+	$(NVCC) $(NVCCFLAGS) $(NATIVE_FLAGS) $(INCLUDES) \
+		$^ -o $@ $(LIB_PATHS) $(LIBS)
+
 test_crt_gpu: \
 	$(TEST_BUILD)/test_crt_gpu_32 \
-	$(TEST_BUILD)/test_crt_gpu_64
+	$(TEST_BUILD)/test_crt_gpu_64 \
+	$(TEST_BUILD)/test_crt_gpu_64native
 	@echo "===== crt_gpu 32-bit ====="
 	@$(TEST_BUILD)/test_crt_gpu_32
 	@echo "===== crt_gpu 64-bit ====="
 	@$(TEST_BUILD)/test_crt_gpu_64
+	@echo "===== crt_gpu 64native ====="
+	@$(TEST_BUILD)/test_crt_gpu_64native
 
 # ================================================================
 # Carry Propagation dual-width tests
@@ -98,13 +114,28 @@ $(TEST_BUILD)/test_carry_prop_64: $(CARRY_SRC) $(CARRY_SRCS_DEP) | $(TEST_BUILD)
 	$(NVCC) $(NVCCFLAGS) -DLIMB_BITS=64 $(INCLUDES) \
 		$^ -o $@ $(LIB_PATHS) $(LIBS)
 
+$(TEST_BUILD)/test_carry_prop_64native: $(CARRY_SRC) $(CARRY_SRCS_DEP) | $(TEST_BUILD) $(GPU_NTT_LIB)
+	$(NVCC) $(NVCCFLAGS) $(NATIVE_FLAGS) $(INCLUDES) \
+		$^ -o $@ $(LIB_PATHS) $(LIBS)
+
 test_carry_prop: \
 	$(TEST_BUILD)/test_carry_prop_32 \
-	$(TEST_BUILD)/test_carry_prop_64
+	$(TEST_BUILD)/test_carry_prop_64 \
+	$(TEST_BUILD)/test_carry_prop_64native
 	@echo "===== carry_prop 32-bit ====="
 	@$(TEST_BUILD)/test_carry_prop_32
 	@echo "===== carry_prop 64-bit ====="
 	@$(TEST_BUILD)/test_carry_prop_64
+	@echo "===== carry_prop 64native ====="
+	@$(TEST_BUILD)/test_carry_prop_64native
+
+test_unit_64native: \
+	$(TEST_BUILD)/test_crt_gpu_64native \
+	$(TEST_BUILD)/test_carry_prop_64native
+	@echo "===== crt_gpu 64native ====="
+	@$(TEST_BUILD)/test_crt_gpu_64native
+	@echo "===== carry_prop 64native ====="
+	@$(TEST_BUILD)/test_carry_prop_64native
 
 # ================================================================
 # ntt_limits dual-width tests
@@ -133,13 +164,26 @@ $(TEST_BUILD)/test_ntt_limits_64: $(OBJ_DIR)/ntt_limits_test_64.o $(OBJ_DIR)/ntt
 	$(CXX) $(CXXFLAGS) -DLIMB_BITS=64 $(INCLUDES) \
 		$^ -o $@
 
+$(OBJ_DIR)/ntt_limits_test_64native.o: $(NTT_LIMITS_SRC) | $(OBJ_DIR)
+	$(CXX) $(CXXFLAGS) $(NATIVE_FLAGS) $(INCLUDES) -c $< -o $@
+
+$(OBJ_DIR)/ntt_limits_64native.o: $(SRC_DIR)/ntt_limits.cpp | $(OBJ_DIR)
+	$(CXX) $(CXXFLAGS) $(NATIVE_FLAGS) $(INCLUDES) -c $< -o $@
+
+$(TEST_BUILD)/test_ntt_limits_64native: $(OBJ_DIR)/ntt_limits_test_64native.o $(OBJ_DIR)/ntt_limits_64native.o | $(TEST_BUILD)
+	$(CXX) $(CXXFLAGS) $(NATIVE_FLAGS) $(INCLUDES) \
+		$^ -o $@
+
 test_ntt_limits: \
 	$(TEST_BUILD)/test_ntt_limits_32 \
-	$(TEST_BUILD)/test_ntt_limits_64
+	$(TEST_BUILD)/test_ntt_limits_64 \
+	$(TEST_BUILD)/test_ntt_limits_64native
 	@echo "===== ntt_limits 32-bit ====="
 	@$(TEST_BUILD)/test_ntt_limits_32
 	@echo "===== ntt_limits 64-bit ====="
 	@$(TEST_BUILD)/test_ntt_limits_64
+	@echo "===== ntt_limits 64native ====="
+	@$(TEST_BUILD)/test_ntt_limits_64native
 
 # ================================================================
 # End-to-end dual-width builds
@@ -161,12 +205,30 @@ $(TEST_BUILD)/test_pipeline_crt_64: | $(TEST_BUILD) $(GPU_NTT_LIB)
 	$(NVCC) $(NVCCFLAGS) -DLIMB_BITS=64 $(INCLUDES) $(LIB_PATHS) \
 		$(PIPELINE_CRT_SRCS) -o $@ $(LIBS)
 
+main_64native: | $(OBJ_DIR) $(GPU_NTT_LIB)
+	$(NVCC) $(NVCCFLAGS) $(NATIVE_FLAGS) $(INCLUDES) $(LIB_PATHS) \
+		$(E2E_SRCS) -o build/test_full_multiply_64native $(LIBS)
+
+test_full_multiply_64native: main_64native
+	@echo "===== full multiply 64native ====="
+	@build/test_full_multiply_64native
+
+$(TEST_BUILD)/test_pipeline_crt_64native: | $(TEST_BUILD) $(GPU_NTT_LIB)
+	$(NVCC) $(NVCCFLAGS) $(NATIVE_FLAGS) $(INCLUDES) $(LIB_PATHS) \
+		$(PIPELINE_CRT_SRCS) -o $@ $(LIBS)
+
 test_pipeline_crt_64: $(TEST_BUILD)/test_pipeline_crt_64
 	@echo "===== pipeline CRT 64-bit ====="
 	@$(TEST_BUILD)/test_pipeline_crt_64
+
+test_pipeline_crt_64native: $(TEST_BUILD)/test_pipeline_crt_64native
+	@echo "===== pipeline CRT 64native ====="
+	@$(TEST_BUILD)/test_pipeline_crt_64native
 
 # ================================================================
 # Phony targets
 # ================================================================
 
-.PHONY: test test_zero_pad test_crt_gpu test_carry_prop test_ntt_limits main_32 main_64 test_pipeline_crt_64
+.PHONY: test test_zero_pad test_crt_gpu test_carry_prop test_ntt_limits \
+	main_32 main_64 main_64native test_pipeline_crt_64 test_pipeline_crt_64native \
+	test_unit_64native test_full_multiply_64native

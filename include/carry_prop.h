@@ -21,3 +21,30 @@ __global__ void carry_fixup_kernel(
     size_t N,
     size_t num_segs,
     int*              __restrict__ escape_flag);
+
+#if defined(NATIVE_HOST_LIMBS)
+__global__ void carry_intra_segment_kernel_u160(
+    const uint64_t* __restrict__ C_lo,
+    const uint64_t* __restrict__ C_mid,
+    const uint32_t* __restrict__ C_hi,
+    OutputLimbType* __restrict__ out,
+    uint64_t*         __restrict__ seg_carry_lo,
+    uint64_t*         __restrict__ seg_carry_mid,
+    uint32_t*         __restrict__ seg_carry_hi,
+    size_t N);
+
+__global__ void carry_inter_segment_kernel_u160(
+    uint64_t* __restrict__ seg_carry_lo,
+    uint64_t* __restrict__ seg_carry_mid,
+    uint32_t* __restrict__ seg_carry_hi,
+    size_t   num_segs);
+
+__global__ void carry_fixup_kernel_u160(
+    OutputLimbType* __restrict__ out,
+    uint64_t*         __restrict__ seg_carry_lo,
+    uint64_t*         __restrict__ seg_carry_mid,
+    uint32_t*         __restrict__ seg_carry_hi,
+    size_t N,
+    size_t num_segs,
+    int*              __restrict__ escape_flag);
+#endif

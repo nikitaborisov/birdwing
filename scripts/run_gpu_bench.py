@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Build and run the GPU full-multiply benchmark (32- and/or 64-bit)."""
+"""Build and run the GPU full-multiply benchmark (32-, 64-, and/or 64native)."""
 
 import argparse
 import subprocess
@@ -15,10 +15,15 @@ def run(cmd: list[str], *, cwd: Path = ROOT) -> None:
     subprocess.run(cmd, cwd=cwd, check=True)
 
 
-def build(bits: int) -> Path:
-    target = f"bench_full_{bits}"
+def build(bits: str) -> Path:
+    if bits == "64native":
+        target = "bench_full_64native"
+        binary_name = "bench_full_multiply_64native"
+    else:
+        target = f"bench_full_{bits}"
+        binary_name = f"bench_full_multiply_{bits}"
     run(["make", target])
-    binary = BUILD_DIR / f"bench_full_multiply_{bits}"
+    binary = BUILD_DIR / binary_name
     if not binary.exists():
         raise FileNotFoundError(f"Expected binary not found: {binary}")
     return binary
@@ -26,13 +31,13 @@ def build(bits: int) -> Path:
 
 def main() -> None:
     parser = argparse.ArgumentParser(
-        description="Run GPU full-multiply benchmark for 32-bit and/or 64-bit builds.",
+        description="Run GPU full-multiply benchmark for 32-bit, 64-bit, and/or 64native builds.",
     )
     parser.add_argument(
         "--limb-bits",
-        choices=("32", "64", "both"),
+        choices=("32", "64", "64native", "both", "all"),
         default="32",
-        help="Which E2E build to run (default: 32)",
+        help="Which E2E build to run (default: 32). 'both'=32+64, 'all'=32+64+64native",
     )
     parser.add_argument(
         "--no-build",
@@ -54,7 +59,13 @@ def main() -> None:
     if args.bench_args and args.bench_args[0] == "--":
         args.bench_args = args.bench_args[1:]
 
-    bits_list = [32, 64] if args.limb_bits == "both" else [int(args.limb_bits)]
+    if args.limb_bits == "both":
+        bits_list = ["32", "64"]
+    elif args.limb_bits == "all":
+        bits_list = ["32", "64", "64native"]
+    else:
+        bits_list = [args.limb_bits]
+
     csv_path = Path(args.csv)
     if not csv_path.is_absolute():
         csv_path = ROOT / csv_path
@@ -63,7 +74,12 @@ def main() -> None:
         if not args.no_build:
             binary = build(bits)
         else:
-            binary = BUILD_DIR / f"bench_full_multiply_{bits}"
+            binary_name = (
+                "bench_full_multiply_64native"
+                if bits == "64native"
+                else f"bench_full_multiply_{bits}"
+            )
+            binary = BUILD_DIR / binary_name
             if not binary.exists():
                 parser.error(f"binary not found: {binary} (run without --no-build)")
 
@@ -72,7 +88,7 @@ def main() -> None:
             cmd.append("--append")
         cmd.extend(args.bench_args)
 
-        print(f"\n=== {bits}-bit benchmark ===")
+        print(f"\n=== {bits} benchmark ===")
         run(cmd)
 
     print(f"\nResults in {csv_path}")

@@ -19,10 +19,8 @@ struct NTTContext {
     size_t N;
     int logN;
 
-    // inputs are always 32-bits
-    // changed from TestDataTypeUint to uint32_t
-    uint32_t* a_raw_dev = nullptr;    // size L_A
-    uint32_t* b_raw_dev = nullptr;    // size L_B
+    InputLimbType* a_raw_dev = nullptr;
+    InputLimbType* b_raw_dev = nullptr;
     size_t L_A = 0, L_B = 0;
 
     vector<TestDataType*> a_dev;
@@ -37,16 +35,26 @@ struct NTTContext {
 
     cudaStream_t stream_a, stream_b;
 
-    uint64_t* d_C_hi;
-    uint64_t* d_C_lo;
+#if defined(NATIVE_HOST_LIMBS)
+    uint64_t* d_C_lo = nullptr;
+    uint64_t* d_C_mid = nullptr;
+    uint32_t* d_C_hi32 = nullptr;
+#else
+    uint64_t* d_C_hi = nullptr;
+    uint64_t* d_C_lo = nullptr;
+#endif
 
-    OutputLimbType* d_out;
-    int64_t*    d_seg_carry;
-    int*        d_carry_escape;
+    OutputLimbType* d_out = nullptr;
+#if defined(NATIVE_HOST_LIMBS)
+    uint64_t* d_seg_carry_lo = nullptr;
+    uint64_t* d_seg_carry_mid = nullptr;
+    uint32_t* d_seg_carry_hi = nullptr;
+#else
+    int64_t*    d_seg_carry = nullptr;
+#endif
+    int*        d_carry_escape = nullptr;
 };
 
-// Host precompute for transform size N. GPU pointers are null until
-// upload_ntt_precomputed() is called (setup bucket).
 struct NTTPrecomputed {
 	size_t N;
 	int logN;
@@ -61,7 +69,6 @@ struct NTTPrecomputed {
 	vector<Ninverse<TestDataType>*> ninv_dev;
 };
 
-// Host-only precompute_ntt breakdown (ms).
 struct PrecomputeTiming {
 	float factors_ms = 0.0f;
 	float params_ms = 0.0f;
@@ -70,7 +77,6 @@ struct PrecomputeTiming {
 	float total_ms = 0.0f;
 };
 
-// GPU upload of precomputed tables (setup bucket).
 struct SetupUploadTiming {
 	float twiddle_upload_ms = 0.0f;
 	float mod_constants_ms = 0.0f;
@@ -78,21 +84,10 @@ struct SetupUploadTiming {
 	float total_ms = 0.0f;
 };
 
-NTTPrecomputed precompute_ntt(size_t N, PrecomputeTiming* timing_out = nullptr);
-void upload_ntt_precomputed(NTTPrecomputed& pre, SetupUploadTiming* timing_out = nullptr);
-NTTContext allocate_ntt_context(const NTTPrecomputed &pre, size_t L_A, size_t L_B);
-
-// Per-invocation GPU stage timings (CUDA events, ms).
-//
-// ingress_fwd_ms — wall-clock critical path for the parallel ingress phase
-//   (H2D + zero-pad + forward NTT on streams a/b). Use this when summing stages.
-//
-// h2d_ms, fwd_pad_ntt_* — per-stream diagnostics; the two streams overlap in
-//   wall time, so do not add h2d_ms + fwd_pad_ntt_ms.
 struct NTTTiming {
-	float ingress_fwd_ms = 0.0f;   // max wall time stream_a vs stream_b
-	float h2d_ms = 0.0f;           // max(copy_a, copy_b) — diagnostic
-	float fwd_pad_ntt_ms = 0.0f;   // max(fwd_a, fwd_b) after copies — diagnostic
+	float ingress_fwd_ms = 0.0f;
+	float h2d_ms = 0.0f;
+	float fwd_pad_ntt_ms = 0.0f;
 	float fwd_pad_ntt_a_ms = 0.0f;
 	float fwd_pad_ntt_b_ms = 0.0f;
 	float pointwise_mul_ms = 0.0f;
@@ -100,19 +95,23 @@ struct NTTTiming {
 	float crt_ms = 0.0f;
 	float carry_ms = 0.0f;
 	float d2h_ms = 0.0f;
-	float total_ms = 0.0f;         // wall clock, execute start -> D2H complete
+	float total_ms = 0.0f;
 };
+
+NTTPrecomputed precompute_ntt(size_t N, PrecomputeTiming* timing_out = nullptr);
+void upload_ntt_precomputed(NTTPrecomputed& pre, SetupUploadTiming* timing_out = nullptr);
+NTTContext allocate_ntt_context(const NTTPrecomputed &pre, size_t L_A, size_t L_B);
 
 void execute_ntt_multiply(
 	NTTContext &ctx,
-    // changed from TestDataTypeUint to uint32_t
-	const uint32_t* a_pinned,
-    // changed from TestDataTypeUint to uint32_t
-	const uint32_t* b_pinned,
+	const InputLimbType* a_pinned,
+	const InputLimbType* b_pinned,
 	vector<OutputLimbType> &C_out,
 	NTTTiming* timing_out = nullptr,
 	vector<uint64_t>* crt_hi_out = nullptr,
-	vector<uint64_t>* crt_lo_out = nullptr
+	vector<uint64_t>* crt_lo_out = nullptr,
+	vector<uint64_t>* crt_mid_out = nullptr,
+	vector<uint32_t>* crt_hi32_out = nullptr
 );
 
 void cleanup_ntt_context(NTTContext &ctx);

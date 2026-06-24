@@ -2,7 +2,44 @@
 
 GPU-accelerated large-integer multiplication via the **Number Theoretic Transform (NTT)** in a **Residue Number System (RNS)**, with **Chinese Remainder Theorem (CRT)** reconstruction and **segmented carry propagation**.
 
-**Host inputs are always 32-bit limbs** (`uint32_t`), regardless of build width. The compile-time `LIMB_BITS` flag selects NTT arithmetic width, RNS prime count, and **output** limb type — not the host input format.
+The repo ships **three compile-time multiply pipelines** (separate binaries). Host input/output limb width depends on the pipeline — see [Multiply pipelines](#multiply-pipelines) below.
+
+---
+
+## Multiply pipelines
+
+Three mutually exclusive builds are selected at compile time via `LIMB_BITS` and optional `NATIVE_HOST_LIMBS` (see `include/config.h`).
+
+| Pipeline | Build flags | Host in | Host out | NTT | `NUM_MODULI` | CRT width | Max square `L` | Binary |
+|---|---|---|---|---|---|---|---|---|
+| **32-bit** | `-DLIMB_BITS=32` | `uint32_t` | `uint32_t` | `Data32` | 3 | ~93-bit (128-bit storage) | 2²² | `bench_full_multiply_32` |
+| **64-bit / 2-mod** | `-DLIMB_BITS=64` | `uint32_t` (widened) | `uint32_t` | `Data64` | 2 | ~118-bit (128-bit storage) | 2³² | `bench_full_multiply_64` |
+| **64-bit native** | `-DLIMB_BITS=64 -DNATIVE_HOST_LIMBS` | `uint64_t` | `uint64_t` | `Data64` | 3 | **160-bit** (`U160`: 64+64+32) | 2³¹ | `bench_full_multiply_64native` |
+
+**When to use which:**
+
+- **32-bit:** default; smaller operands; three ~29-bit primes; most mature path.
+- **64/2-mod:** operands counted in **32-bit host limbs** but NTT at 64-bit with 2×59-bit primes; output remains 32-bit limbs.
+- **64-native:** operands already in **64-bit limbs** (full `uint64_t` range); 3×59-bit RNS; U160 CRT → 64-bit output limbs.
+
+**Coefficient bound:** `max coeff = min(L_A, L_B) × (2^INPUT_LIMB_BITS − 1)²`. At native max square `L = 2³¹`, this is ≈ 2¹⁵⁹ — stored as **U160** (`lo`, `mid`, `hi32`).
+
+**Approved 59-bit primes** (`src/gpu_ntt.cu`):
+
+| Hex | v₂(p−1) | Used in |
+|---|---|---|
+| `0x400002600000001` | 33 | 64/2-mod p₀, 64native p₀ |
+| `0x400004200000001` | 33 | 64/2-mod p₁, 64native p₁ |
+| `0x400001100000001` | 32 | **64native p₂ only** (caps `max_logN` at 32) |
+
+**API entry points:**
+
+| Pipeline | Host multiply API |
+|---|---|
+| 32-bit, 64/2-mod | `host_multiply_merge(vector<uint32_t> …)` |
+| 64-native | `host_multiply_merge_native(vector<uint64_t> …)` |
+
+Orchestration: `execute_ntt_multiply()` in `src/gpu_ntt.cu`.
 
 ---
 
@@ -11,12 +48,13 @@ GPU-accelerated large-integer multiplication via the **Number Theoretic Transfor
 Large integers `A` and `B` (as limb arrays) are multiplied by treating them as polynomials, transforming to the frequency domain, multiplying pointwise, transforming back, and reconstructing the integer result.
 
 ```
-  Host input (32-bit limbs)
+  Host input (limb array — width per pipeline)
         │
         ▼
   ┌─────────────┐
-  │  zero_pad   │  zero-extend each uint32_t limb to TestDataTypeUint,
-  │             │  then pad to length N (next power of 2 ≥ L_A + L_B − 1)
+  │  zero_pad   │  32-bit: zero-extend to TestDataTypeUint, pad to N
+  │             │  64/2-mod: same (uint32 → uint64 widen)
+  │             │  64-native: reduce each limb mod p_i per stream, pad
   └──────┬──────┘
          │  (per modulus, on separate CUDA streams)
          ▼
@@ -37,7 +75,7 @@ Large integers `A` and `B` (as limb arrays) are multiplied by treating them as p
          │  residues c_dev[i][k] for each modulus i, coefficient k
          ▼
   ┌─────────────┐
-  │  CRT (GPU)  │  Garner's algorithm → 128-bit coefficients (hi, lo)
+  │  CRT (GPU)  │  Garner → 128-bit (hi, lo) or U160 (lo, mid, hi32)
   └──────┬──────┘
          ▼
   ┌─────────────┐
@@ -45,10 +83,10 @@ Large integers `A` and `B` (as limb arrays) are multiplied by treating them as p
   │  propagation│
   └──────┬──────┘
          ▼
-  Host output (TestDataTypeUint limbs)
+  Host output (OutputLimbType — uint32_t or uint64_t per pipeline)
 ```
 
-The orchestration lives in `execute_ntt_multiply()` (`src/gpu_ntt.cu`). The host entry point is `host_multiply_merge()` (`src/host_multiply.cpp`).
+The orchestration lives in `execute_ntt_multiply()` (`src/gpu_ntt.cu`). Host entry points: `host_multiply_merge()` (32-bit and 64/2-mod) and `host_multiply_merge_native()` (64-native) in `src/host_multiply.cpp`.
 
 ---
 
@@ -74,8 +112,8 @@ ntt_cgbn/
 |------|------|
 | `config.h` | Compile-time knobs: `LIMB_BITS` (32 or 64), `NUM_MODULI`, `CARRY_SEG`, type aliases |
 | `gpu_ntt.h` | Main GPU multiply API: `NTTPrecomputed`, `NTTContext`, `precompute_ntt`, `execute_ntt_multiply` |
-| `multiply.h` | Host multiply entry: `host_multiply_merge` |
-| `zero_pad.h` | GPU zero-padding kernel wrapper |
+| `multiply.h` | Host multiply: `host_multiply_merge` (32/64-2mod), `host_multiply_merge_native` (64-native) |
+| `zero_pad.h` | GPU zero-padding / mod-reduce ingress wrapper |
 | `carry_prop.h` | Three carry-propagation `__global__` kernels |
 | `crt.h` | Host-side CRT (2-prime and general Garner) |
 | `crt_gpu.h` | GPU CRT: `CRTGarnerParams`, `crt_combine_gpu` |
@@ -90,8 +128,8 @@ Headers pull in types from the external **GPU-NTT** library (`ntt.cuh`, `modular
 |------|------|
 | `gpu_ntt.cu` | Core pipeline: NTT precomputation, context allocation, `execute_ntt_multiply`, `pointwise_mul_kernel`, moduli/roots tables |
 | `host_multiply.cpp` | Wraps GPU pipeline for host callers; writes timing CSV |
-| `zero_pad.cu` | `zero_pad_kernel` — zero-extends `uint32_t` inputs to `TestDataTypeUint`, pads to length `N` |
-| `crt_gpu.cu` | Garner CRT on GPU; constant-memory params; 128-bit coefficient output |
+| `zero_pad.cu` | `zero_pad_kernel` (uint32 widen); `zero_pad_kernel_u64` (native: mod p_i + pad) |
+| `crt_gpu.cu` | Garner CRT on GPU; 128-bit or U160 coefficient output |
 | `crt.cpp` | Host CRT reference (`crt_combine_2`, `crt_combine_many`) |
 | `crt_utils.cpp` | `modinv_u64` implementation |
 | `carry_prop.cu` | Intra-segment, inter-segment, and fixup carry kernels |
@@ -100,9 +138,9 @@ Headers pull in types from the external **GPU-NTT** library (`ntt.cuh`, `modular
 
 | Test | What it checks |
 |------|----------------|
-| `test_zero_pad.cu` | Zero-padding correctness (32- and 64-bit builds) |
-| `test_crt_gpu.cu` | GPU CRT vs host reference (dual-width) |
-| `test_carry_prop.cu` | Carry propagation edge cases and random inputs |
+| `test_zero_pad.cu` | Zero-padding / native mod-reduce ingress |
+| `test_crt_gpu.cu` | GPU CRT vs host reference (32, 64, 64native/U160) |
+| `test_carry_prop.cu` | Carry propagation (128-bit→32-out and U160→64-out) |
 | `test_pointwise_mul.cu` | Pointwise multiply kernel |
 | `test_crt.cpp` | Host CRT |
 | `test_gpu_ntt_smoke.cu` | Minimal GPU NTT smoke test |
@@ -111,7 +149,8 @@ Headers pull in types from the external **GPU-NTT** library (`ntt.cuh`, `modular
 Run all tests: `make test`  
 Run one: `make test TEST=test_crt`  
 Component targets: `make test_zero_pad`, `make test_crt_gpu`, `make test_carry_prop`  
-Dual-width E2E: `make main_32`, `make main_64`
+Dual-width E2E: `make main_32`, `make main_64`, `make main_64native`  
+Native unit tests: `make test_unit_64native`, `make test_pipeline_crt_64native`
 
 ### `bench/`
 
@@ -127,7 +166,8 @@ Build targets (`make/bench.mk`):
 | `make bench` | `build/bench_ntt` | NTT round-trip only |
 | `make bench_full_32` | `build/bench_full_multiply_32` | Full pipeline, `LIMB_BITS=32`, 3-prime RNS |
 | `make bench_full_64` | `build/bench_full_multiply_64` | Full pipeline, `LIMB_BITS=64`, 2-prime RNS |
-| `make bench_full` | both of the above | |
+| `make bench_full_64native` | `build/bench_full_multiply_64native` | Full pipeline, native `uint64_t` I/O, 3×59-bit RNS |
+| `make bench_full` | all three above | |
 
 The full-multiply benchmark accepts `--warmup N`, `--iters N`, `--csv FILE`, `--append`, and limb specs (`L` values `< 64` mean `1<<L` limbs; ranges like `16-24` are inclusive). Output CSV columns: `limb_bits,L_arg,L,N,logN,warmup,iters,mean_ms,stddev_ms,min_ms,max_ms`.
 
@@ -150,8 +190,8 @@ The full-multiply benchmark accepts `--warmup N`, `--iters N`, `--csv FILE`, `--
 | `crt.py` | CRT reference and residue debugging |
 | `carry.py` | Carry propagation reference |
 | `full_mul.py`, `gpu_ntt_verify.py` | End-to-end verification against Python reference |
-| `rng.py` | Generate random limb pairs → binary input for `main` |
-| `run_gpu_bench.py` | Build and run `bench_full_multiply_{32,64}`; `--limb-bits 32\|64\|both` |
+| `rng.py` | Generate random limb pairs → binary input (`--limb-bits 32\|64`) |
+| `run_gpu_bench.py` | Build and run `bench_full_multiply_{32,64,64native}`; `--limb-bits 32\|64\|64native\|both\|all` |
 | `plot_bench.py` | Plot `gpu_multiply_bench.csv` (log-log, error bars) → PNG |
 
 ---
@@ -174,24 +214,25 @@ Moduli and 2²³-th roots of unity are hardcoded in `gpu_ntt.cu` and derived at 
 
 ## Configuration
 
-Set at compile time via `-DLIMB_BITS=32|64` (default 32 in `config.h`):
+Set at compile time via `-DLIMB_BITS=32|64` and optional `-DNATIVE_HOST_LIMBS` (default 32 in `config.h`):
 
-| `LIMB_BITS` | NTT type (`gpu_ntt.cu`) | Output limb type | `NUM_MODULI` | RNS primes (`gpu_ntt.cu`) |
-|-------------|-------------------------|------------------|--------------|---------------------------|
-| 32 | `Data32` | `uint32_t` | 3 | `0x2d000001`, `0x23800001`, `0x26800001` |
-| 64 | `Data64` | `uint64_t` | 2 | `0x6723cbb800001`, `0x6723cb6800001` (62-bit NTT-friendly) |
+| Pipeline | Flags | NTT type | Host in | Host out | `NUM_MODULI` | RNS primes (`gpu_ntt.cu`) |
+|---|---|---|---|---|---|---|
+| 32-bit | `-DLIMB_BITS=32` | `Data32` | `uint32_t` | `uint32_t` | 3 | `0x2d000001`, `0x23800001`, `0x26800001` |
+| 64/2-mod | `-DLIMB_BITS=64` | `Data64` | `uint32_t` (widened) | `uint32_t` | 2 | `0x400002600000001`, `0x400004200000001` |
+| 64-native | `-DLIMB_BITS=64 -DNATIVE_HOST_LIMBS` | `Data64` | `uint64_t` | `uint64_t` | 3 | above + `0x400001100000001` |
 
-### Input vs output limb width
+### Input vs output limb width (per pipeline)
 
-| Stage | Width |
-|-------|-------|
-| Host input (`main`, benchmarks, `execute_ntt_multiply`) | Always `uint32_t` limbs |
-| After `zero_pad_kernel` (`src/zero_pad.cu`) | `TestDataTypeUint` — zero-extended cast: upper 32 bits are 0 in 64-bit builds |
-| After carry propagation | `TestDataTypeUint` output limbs (`uint32_t` or `uint64_t` per `LIMB_BITS`) |
+| Pipeline | Host input | After ingress | After carry |
+|---|---|---|---|
+| 32-bit | `uint32_t` | `uint32_t` in NTT field | `uint32_t` |
+| 64/2-mod | `uint32_t` | `uint64_t` (zero-extended) | `uint32_t` |
+| 64-native | `uint64_t` | `uint64_t` reduced mod each `p_i` | `uint64_t` |
 
-The **64-bit build** therefore uses a **2-prime RNS** with **32-bit input limbs widened to 64 bits** before NTT. This is intentional: operand size is expressed in 32-bit host limbs while NTT/CRT arithmetic runs at 64-bit width with fewer, larger primes. Verified by `tests/test_zero_pad.cu` (`test_no_upper_bits_set`).
+The **64/2-mod** build uses a **2-prime RNS** with **32-bit input limbs widened to 64 bits** before NTT. Verified by `tests/test_zero_pad.cu` (`test_no_upper_bits_set`).
 
-`NTTContext` stores raw inputs as `uint32_t*` (`a_raw_dev` / `b_raw_dev`); per-modulus padded buffers `a_dev[i]` / `b_dev[i]` are `TestDataType*`.
+**64-native** reduces each host limb modulo the stream's NTT prime before padding (limbs may exceed 59-bit primes). `NTTContext` stores raw inputs as `InputLimbType*` (`uint32_t*` or `uint64_t*`).
 
 Other defines:
 
@@ -210,7 +251,7 @@ Precomputed per transform size `N`: NTT parameters, device root tables, modulus/
 
 ### `NTTContext` (per multiply)
 
-Mutable GPU buffers: padded operands `a_dev`/`b_dev`, frequency-domain products `c_dev`, CRT output `d_C_hi`/`d_C_lo`, final limbs `d_out`, segment carries `d_seg_carry`. Allocated via `allocate_ntt_context(pre, L_A, L_B)`.
+Mutable GPU buffers: padded operands `a_dev`/`b_dev`, frequency-domain products `c_dev`, CRT output (`d_C_hi`/`d_C_lo` or native `d_C_lo`/`d_C_mid`/`d_C_hi32`), final limbs `d_out`, segment carries `d_seg_carry`. Allocated via `allocate_ntt_context(pre, L_A, L_B)`.
 
 ### Residue layout
 
@@ -297,7 +338,7 @@ Based on recent commit history and in-code TODOs:
 
 ### Dual-width unified executable — investigation
 
-Today the 32-bit and 64-bit multiply pipelines are **mutually exclusive at link time**. Each width is a full recompile of all `src/*.cu` and `src/*.cpp` with `-DLIMB_BITS=32` or `-DLIMB_BITS=64`, producing separate binaries (`build/bench_full_multiply_32`, `build/bench_full_multiply_64`, `build/test_full_multiply_{32,64}`). The default `make` target and shared `build/*.o` cache always use `LIMB_BITS=32` (from `config.h`).
+Today the 32-bit, 64/2-mod, and 64-native multiply pipelines are **mutually exclusive at link time**. Each is a full recompile with `-DLIMB_BITS=32`, `-DLIMB_BITS=64`, or `-DLIMB_BITS=64 -DNATIVE_HOST_LIMBS`, producing separate binaries (`build/bench_full_multiply_{32,64,64native}`, `build/test_full_multiply_{32,64,64native}`). The default `make` target and shared `build/*.o` cache always use `LIMB_BITS=32` (from `config.h`).
 
 **Goal:** one executable that can run either pipeline at runtime (e.g. `--limb-bits 32|64` or automatic selection by operand size).
 

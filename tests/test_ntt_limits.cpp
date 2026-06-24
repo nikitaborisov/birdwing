@@ -11,7 +11,18 @@
 using namespace std;
 
 // Tables mirrored from src/gpu_ntt.cu for integration tests.
-#if LIMB_BITS == 64
+#if defined(NATIVE_HOST_LIMBS)
+vector<TestDataTypeUint> moduli = {
+    0x400002600000001ULL,
+    0x400004200000001ULL,
+    0x400001100000001ULL,
+};
+vector<TestDataTypeUint> roots_of_unity_max = {
+    273765203699653965ULL,
+    26231613454922890ULL,
+    144261359744151243ULL,
+};
+#elif LIMB_BITS == 64
 vector<TestDataTypeUint> moduli = {0x400002600000001ULL, 0x400004200000001ULL};
 vector<TestDataTypeUint> roots_of_unity_max = {273765203699653965ULL, 26231613454922890ULL};
 #else
@@ -53,7 +64,14 @@ static void test_max_logN_for_prime()
 {
     cout << "\n=== max_logN_for_prime ===\n";
 
-#if LIMB_BITS == 64
+#if defined(NATIVE_HOST_LIMBS)
+    check_eq_int(max_logN_for_prime(0x400002600000001ULL), 33,
+                 "native p0 has v2(p-1)=33");
+    check_eq_int(max_logN_for_prime(0x400004200000001ULL), 33,
+                 "native p1 has v2(p-1)=33");
+    check_eq_int(max_logN_for_prime(0x400001100000001ULL), 32,
+                 "native p2 has v2(p-1)=32");
+#elif LIMB_BITS == 64
     check_eq_int(max_logN_for_prime(0x400002600000001ULL), 33,
                  "64-bit modulus 0 has v2(p-1)=33");
     check_eq_int(max_logN_for_prime(0x400004200000001ULL), 33,
@@ -72,7 +90,10 @@ static void test_max_root_logN()
 {
     cout << "\n=== max_root_logN ===\n";
 
-#if LIMB_BITS == 64
+#if defined(NATIVE_HOST_LIMBS)
+    check_eq_int(max_root_logN(144261359744151243ULL, 0x400001100000001ULL), 32,
+                 "native root 2 has order 2^32");
+#elif LIMB_BITS == 64
     check_eq_int(max_root_logN(273765203699653965ULL, 0x400002600000001ULL), 33,
                  "64-bit root 0 has order 2^33");
     check_eq_int(max_root_logN(26231613454922890ULL, 0x400004200000001ULL), 33,
@@ -116,7 +137,12 @@ static void test_configured_limits()
 {
     cout << "\n=== configured moduli / roots ===\n";
 
-#if LIMB_BITS == 64
+#if defined(NATIVE_HOST_LIMBS)
+    check_eq_int(max_supported_logN(), 32, "max_supported_logN()==32");
+    check_eq_u64(max_supported_N(), size_t(1) << 32, "max_supported_N()==2^32");
+    check_eq_u64(max_supported_limb_count(), size_t(1) << 31,
+                 "max_supported_limb_count()==2^31");
+#elif LIMB_BITS == 64
     check_eq_int(max_supported_logN(), 33, "max_supported_logN()==33");
     check_eq_u64(max_supported_N(), size_t(1) << 33, "max_supported_N()==2^33");
     check_eq_u64(max_supported_limb_count(), size_t(1) << 32,
@@ -144,6 +170,11 @@ static void test_crt_coefficient_bound()
     check(crt_coefficient_bound_satisfied(L_crt_only, L_crt_only, &why),
           "L=2^23 satisfies CRT bound alone (32-bit moduli)");
     const size_t L_bad = size_t(1) << 24;
+#elif defined(NATIVE_HOST_LIMBS)
+    const size_t L_ok_native = size_t(1) << 31;
+    check(crt_coefficient_bound_satisfied(L_ok_native, L_ok_native, &why),
+          "L=2^31 square multiply satisfies CRT bound (64native)");
+    const size_t L_bad = size_t(1) << 50;
 #elif LIMB_BITS == 64
     const size_t L_crt_only = size_t(1) << 32;
     check(crt_coefficient_bound_satisfied(L_crt_only, L_crt_only, &why),
@@ -173,7 +204,11 @@ static void test_multiply_size_supported()
     check(multiply_size_supported(L_ok, L_ok, &why),
           "L=2^22 square multiply supported");
 
-#if LIMB_BITS == 64
+#if defined(NATIVE_HOST_LIMBS)
+    const size_t L_bad = size_t(1) << 32;
+    check(!multiply_size_supported(L_bad, L_bad, &why),
+          "L=2^32 square multiply rejected (needs N=2^33, p2 v2=32)");
+#elif LIMB_BITS == 64
     const size_t L_bad = size_t(1) << 33;
     check(!multiply_size_supported(L_bad, L_bad, &why),
           "L=2^33 square multiply rejected (needs N=2^34)");
@@ -190,7 +225,10 @@ static void test_ntt_size_supported_accept()
 
     string why;
 
-#if LIMB_BITS == 64
+#if defined(NATIVE_HOST_LIMBS)
+    const int max_log = 32;
+    const size_t L_max = size_t(1) << 31;
+#elif LIMB_BITS == 64
     const int max_log = 33;
     const size_t L_max = size_t(1) << 32;
 #else
@@ -215,7 +253,10 @@ static void test_ntt_size_supported_reject()
 
     string why;
 
-#if LIMB_BITS == 64
+#if defined(NATIVE_HOST_LIMBS)
+    const int oversize_log = 33;
+    const size_t L_too_big = size_t(1) << 32;
+#elif LIMB_BITS == 64
     const int oversize_log = 34;
     const size_t L_too_big = size_t(1) << 33;
 #else
@@ -257,7 +298,10 @@ static void test_l_arg_convention()
 
     string why;
 
-#if LIMB_BITS == 64
+#if defined(NATIVE_HOST_LIMBS)
+    const int ok_arg = 30;
+    const int bad_arg = 32;
+#elif LIMB_BITS == 64
     const int ok_arg = 32;
     const int bad_arg = 33;
 #else

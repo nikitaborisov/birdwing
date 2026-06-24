@@ -30,6 +30,13 @@ $(BENCH_FULL_64): $(BENCH_FULL_SRCS) | $(OBJ_DIR) $(GPU_NTT_LIB)
 bench: gpu-ntt $(BENCH_TARGET)
 bench_full_32: $(BENCH_FULL_32)
 bench_full_64: $(BENCH_FULL_64)
-bench_full: bench_full_32 bench_full_64
+BENCH_FULL_64NATIVE := build/bench_full_multiply_64native
 
-.PHONY: bench bench_full bench_full_32 bench_full_64
+$(BENCH_FULL_64NATIVE): $(BENCH_FULL_SRCS) | $(OBJ_DIR) $(GPU_NTT_LIB)
+	$(NVCC) $(NVCCFLAGS) -DLIMB_BITS=64 -DNATIVE_HOST_LIMBS $(INCLUDES) $(LIB_PATHS) \
+		$^ -o $@ $(LIBS)
+
+bench_full_64native: $(BENCH_FULL_64NATIVE)
+bench_full: bench_full_32 bench_full_64 bench_full_64native
+
+.PHONY: bench bench_full bench_full_32 bench_full_64 bench_full_64native

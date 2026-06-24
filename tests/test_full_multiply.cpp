@@ -20,6 +20,8 @@ using namespace std;
 #define YELLOW     "\033[33m"
 #define RESET      "\033[0m"
 
+#if !defined(NATIVE_HOST_LIMBS)
+
 // ---------------- CPU REFERENCE MULTIPLY ----------------
 // Bigint schoolbook multiply with full carry
 vector<OutputLimbType> cpu_schoolbook_mul(
@@ -421,7 +423,102 @@ void profile_run(size_t L)
     host_multiply_merge(A, B, C, duration);
 }
 
+#endif // !NATIVE_HOST_LIMBS
+
 // ---------------- MAIN ----------------
+#if defined(NATIVE_HOST_LIMBS)
+
+vector<uint64_t> random_limbs_u64(size_t n, uint64_t seed) {
+    mt19937_64 rng(seed);
+    vector<uint64_t> v(n);
+    for (size_t i = 0; i < n; i++) {
+        if (i % 8 == 0) v[i] = 0;
+        else if (i % 8 == 1) v[i] = 1;
+        else if (i % 8 == 2) v[i] = UINT64_MAX;
+        else v[i] = rng();
+    }
+    return v;
+}
+
+vector<uint64_t> gmp_mul_u64(const vector<uint64_t>& A, const vector<uint64_t>& B) {
+    mpz_t a, b, c;
+    mpz_init(a); mpz_init(b); mpz_init(c);
+    mpz_import(a, A.size(), -1, sizeof(uint64_t), 0, 0, A.data());
+    mpz_import(b, B.size(), -1, sizeof(uint64_t), 0, 0, B.data());
+    mpz_mul(c, a, b);
+    vector<uint64_t> out(A.size() + B.size());
+    size_t count = 0;
+    mpz_export(out.data(), &count, -1, sizeof(uint64_t), 0, 0, c);
+    out.resize(A.size() + B.size(), 0);
+    mpz_clear(a); mpz_clear(b); mpz_clear(c);
+    return out;
+}
+
+bool compare_u64(const vector<uint64_t>& A, const vector<uint64_t>& B) {
+    const size_t MAX_REPORT = 4;
+    size_t n = max(A.size(), B.size());
+    bool ok = true;
+    size_t mismatch_count = 0;
+
+    for (size_t i = 0; i < n; i++) {
+        uint64_t a = i < A.size() ? A[i] : 0;
+        uint64_t b = i < B.size() ? B[i] : 0;
+        if (a != b) {
+            if (mismatch_count < MAX_REPORT) {
+                cout << RED_BOLD << "  [MISMATCH] limb " << i
+                     << " gpu=" << a << " gmp=" << b << RESET << "\n";
+            }
+            mismatch_count++;
+            ok = false;
+            if (mismatch_count == MAX_REPORT) {
+                cout << RED_BOLD
+                     << "  ... further mismatches not reported ..."
+                     << RESET << "\n";
+            }
+        }
+    }
+
+    if (mismatch_count > 0) {
+        cout << RED_BOLD << "  total mismatches: " << mismatch_count
+             << RESET << "\n";
+    }
+    return ok;
+}
+
+void test_native_pipeline(size_t L) {
+    cout << YELLOW << "\n[Test] 64native multiply L=" << L << RESET << "\n";
+    auto A = random_limbs_u64(L, 1234);
+    auto B = random_limbs_u64(L, 5678);
+    vector<uint64_t> C_gpu, C_gmp;
+    chrono::duration<double, milli> dur;
+    host_multiply_merge_native(A, B, C_gpu, dur);
+    cout << "  gpu time: " << fixed << setprecision(1) << dur.count() << " ms\n";
+    auto t0 = chrono::high_resolution_clock::now();
+    C_gmp = gmp_mul_u64(A, B);
+    auto t1 = chrono::high_resolution_clock::now();
+    double gmp_ms = chrono::duration<double, milli>(t1 - t0).count();
+    cout << "  gmp time: " << fixed << setprecision(1) << gmp_ms << " ms\n";
+    bool ok = compare_u64(C_gpu, C_gmp);
+    cout << (ok ? GREEN_BOLD "[PASS]\n" : RED_BOLD "[FAIL]\n") << RESET;
+    if (!ok) exit(1);
+}
+
+int main() {
+    cout << YELLOW << "==== 64NATIVE FULL MULTIPLY TEST ====\n" << RESET;
+    test_native_pipeline(4);
+    test_native_pipeline(16);
+    test_native_pipeline(64);
+    test_native_pipeline(256);
+    test_native_pipeline(1 << 12);   // 4096 — cross-segment carry regression
+    test_native_pipeline(1 << 10);   // 1024
+    test_native_pipeline(1 << 16);   // 65536
+    test_native_pipeline(1 << 20);   // 1048576
+    cout << YELLOW << "==== TEST COMPLETE ====\n" << RESET;
+    return 0;
+}
+
+#else
+
 int main()
 {
     #ifdef PROFILE
@@ -463,3 +560,5 @@ int main()
         
     #endif
 }
+
+#endif // NATIVE_HOST_LIMBS
