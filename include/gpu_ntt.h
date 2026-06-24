@@ -59,6 +59,27 @@ struct NTTPrecomputed {
 NTTPrecomputed precompute_ntt(size_t N);
 NTTContext allocate_ntt_context(const NTTPrecomputed &pre, size_t L_A, size_t L_B);
 
+// Per-invocation GPU stage timings (CUDA events, ms).
+//
+// ingress_fwd_ms — wall-clock critical path for the parallel ingress phase
+//   (H2D + zero-pad + forward NTT on streams a/b). Use this when summing stages.
+//
+// h2d_ms, fwd_pad_ntt_* — per-stream diagnostics; the two streams overlap in
+//   wall time, so do not add h2d_ms + fwd_pad_ntt_ms.
+struct NTTTiming {
+	float ingress_fwd_ms = 0.0f;   // max wall time stream_a vs stream_b
+	float h2d_ms = 0.0f;           // max(copy_a, copy_b) — diagnostic
+	float fwd_pad_ntt_ms = 0.0f;   // max(fwd_a, fwd_b) after copies — diagnostic
+	float fwd_pad_ntt_a_ms = 0.0f;
+	float fwd_pad_ntt_b_ms = 0.0f;
+	float pointwise_mul_ms = 0.0f;
+	float intt_ms = 0.0f;
+	float crt_ms = 0.0f;
+	float carry_ms = 0.0f;
+	float d2h_ms = 0.0f;
+	float total_ms = 0.0f;         // wall clock, execute start -> D2H complete
+};
+
 void execute_ntt_multiply(
 	NTTContext &ctx,
     // changed from TestDataTypeUint to uint32_t
@@ -66,7 +87,8 @@ void execute_ntt_multiply(
     // changed from TestDataTypeUint to uint32_t
 	const uint32_t* b_pinned,
 	vector<TestDataTypeUint> &C_out,
-	__int128 M, __int128 M_half
+	__int128 M, __int128 M_half,
+	NTTTiming* timing_out = nullptr
 );
 
 void cleanup_ntt_context(NTTContext &ctx);

@@ -1,42 +1,123 @@
 #!/usr/bin/env python3
-"""Plot GPU multiply benchmark CSV with error bars (log-log)."""
+"""Plot GPU multiply benchmark CSV: total timing + stacked breakdown."""
+
+from __future__ import annotations
 
 import argparse
 import csv
+import math
 from collections import defaultdict
 from pathlib import Path
 
 import matplotlib.pyplot as plt
 import numpy as np
 
+CORE_COLUMNS = {
+    "limb_bits", "L_arg", "L", "N", "mean_ms", "stddev_ms", "min_ms", "max_ms",
+}
 
-def load_csv(path: Path) -> list[dict]:
-    rows = []
+EXECUTE_STACK_LAYERS: tuple[tuple[str, str], ...] = (
+    ("ingress_fwd_mean_ms", "H2D + fwd pad+NTT"),
+    ("mul_mean_ms", "Pointwise mul"),
+    ("intt_mean_ms", "INTT"),
+    ("crt_mean_ms", "CRT"),
+    ("carry_mean_ms", "Carry"),
+    ("d2h_mean_ms", "D2H"),
+)
+
+# Diagnostic columns (overlapping across streams — not stacked together).
+EXECUTE_DIAG_COLUMNS = frozenset({
+    "h2d_mean_ms",
+    "fwd_pad_ntt_mean_ms",
+    "fwd_pad_ntt_a_mean_ms",
+    "fwd_pad_ntt_b_mean_ms",
+})
+
+SEQUENTIAL_EXECUTE_COLUMNS = (
+    "mul_mean_ms",
+    "intt_mean_ms",
+    "crt_mean_ms",
+    "carry_mean_ms",
+    "d2h_mean_ms",
+)
+
+INFRA_LAYERS: tuple[tuple[str, str], ...] = (
+    ("setup_pinned_ms", "Setup: pinned"),
+    ("setup_alloc_ms", "Setup: alloc"),
+    ("teardown_free_ctx_ms", "Teardown: free ctx"),
+    ("teardown_free_pre_ms", "Teardown: free pre"),
+    ("teardown_free_pinned_ms", "Teardown: free pinned"),
+)
+
+INFRA_COLUMNS = {key for key, _ in INFRA_LAYERS}
+EXECUTE_STACK_COLUMNS = {key for key, _ in EXECUTE_STACK_LAYERS}
+OPTIONAL_BREAKDOWN_COLUMNS = EXECUTE_STACK_COLUMNS | INFRA_COLUMNS | EXECUTE_DIAG_COLUMNS
+
+EXECUTE_COLORS = [plt.cm.tab10(i) for i in range(len(EXECUTE_STACK_LAYERS))]
+
+# tab20 — distinct from execute tab10 palette
+INFRA_COLORS = [plt.cm.tab20(i + 2) for i in range(len(INFRA_LAYERS))]
+
+
+def derive_ingress_fwd(row: dict) -> float:
+    """Wall-clock ingress phase; residual from total when column is absent."""
+    if "ingress_fwd_mean_ms" in row:
+        return float(row["ingress_fwd_mean_ms"])
+    sequential = sum(float(row[col]) for col in SEQUENTIAL_EXECUTE_COLUMNS)
+    return max(float(row["mean_ms"]) - sequential, 0.0)
+
+
+def enrich_breakdown_row(entry: dict) -> None:
+    if "ingress_fwd_mean_ms" not in entry:
+        entry["ingress_fwd_mean_ms"] = derive_ingress_fwd(entry)
+
+
+def has_breakdown_columns(fieldnames: list[str] | None) -> bool:
+    if fieldnames is None:
+        return False
+    names = set(fieldnames)
+    if not INFRA_COLUMNS.issubset(names):
+        return False
+    if not set(SEQUENTIAL_EXECUTE_COLUMNS).issubset(names):
+        return False
+    return (
+        "ingress_fwd_mean_ms" in names
+        or EXECUTE_DIAG_COLUMNS.intersection(names)
+    )
+
+
+def load_csv(path: Path) -> tuple[list[dict], bool]:
+    rows: list[dict] = []
     with path.open(newline="") as f:
         reader = csv.DictReader(f)
-        required = {
-            "limb_bits", "L_arg", "L", "N", "mean_ms", "stddev_ms",
-            "min_ms", "max_ms",
-        }
-        if reader.fieldnames is None or not required.issubset(reader.fieldnames):
-            missing = required - set(reader.fieldnames or [])
+        if reader.fieldnames is None or not CORE_COLUMNS.issubset(reader.fieldnames):
+            missing = CORE_COLUMNS - set(reader.fieldnames or [])
             raise ValueError(f"CSV missing columns: {sorted(missing)}")
 
+        has_breakdown = has_breakdown_columns(reader.fieldnames)
+
         for row in reader:
-            rows.append({
+            entry: dict = {
                 "limb_bits": int(row["limb_bits"]),
                 "L_arg": int(row["L_arg"]),
                 "L": int(row["L"]),
                 "N": int(row["N"]),
-                "logN": int(row["logN"]),
+                "logN": int(row["logN"]) if "logN" in row else int(math.log2(int(row["N"]))),
                 "mean_ms": float(row["mean_ms"]),
                 "stddev_ms": float(row["stddev_ms"]),
                 "min_ms": float(row["min_ms"]),
                 "max_ms": float(row["max_ms"]),
-            })
+            }
+            if has_breakdown:
+                for key in OPTIONAL_BREAKDOWN_COLUMNS:
+                    if key in row:
+                        entry[key] = float(row[key])
+                enrich_breakdown_row(entry)
+            rows.append(entry)
+
     if not rows:
         raise ValueError(f"No data rows in {path}")
-    return rows
+    return rows, has_breakdown
 
 
 def group_rows(rows: list[dict], x_key: str) -> dict[str, list[dict]]:
@@ -116,7 +197,19 @@ def configure_xaxis(ax, x_key: str, x_values: np.ndarray) -> None:
     ax.set_xticklabels(labels)
 
 
-def plot_benchmark(
+def x_tick_labels(x_key: str, x_values: list[float]) -> list[str]:
+    if x_key == "L_arg":
+        return [f"$2^{{{int(v)}}}$" for v in x_values]
+    if all(is_pow2(v) for v in x_values):
+        return [f"$2^{{{int(round(math.log2(v)))}}}$" for v in x_values]
+    return [str(int(v)) if float(v).is_integer() else f"{v:g}" for v in x_values]
+
+
+def stacked_output_path(total_output: Path) -> Path:
+    return total_output.with_name(f"{total_output.stem}_stacked{total_output.suffix}")
+
+
+def plot_total(
     rows: list[dict],
     *,
     x_key: str,
@@ -169,8 +262,8 @@ def plot_benchmark(
     }
     configure_xaxis(ax, x_key, np.array(all_x))
     ax.set_xlabel(x_labels.get(x_key, x_key))
-    ax.set_ylabel("Time (ms)")
-    ax.set_title(title or "GPU full multiply benchmark")
+    ax.set_ylabel("Execute time (ms)")
+    ax.set_title(title or "GPU full multiply — execute time")
     ax.grid(True, which="both", linestyle="--", alpha=0.4)
 
     subtitle = error_labels[error_mode]
@@ -199,9 +292,186 @@ def plot_benchmark(
         plt.close(fig)
 
 
+def draw_stacked_bars(
+    ax: plt.Axes,
+    groups: dict[str, list[dict]],
+    layers: tuple[tuple[str, str], ...],
+    colors: list,
+    x_key: str,
+    *,
+    ylabel: str,
+) -> tuple[list, list[str], list[str]]:
+    n_groups = len(groups)
+    group_labels = sorted(groups)
+    all_x_values: list[float] = []
+    for series in groups.values():
+        all_x_values.extend(r[x_key] for r in series)
+    unique_x = sorted({float(v) for v in all_x_values})
+    x_to_idx = {v: i for i, v in enumerate(unique_x)}
+
+    bar_width = min(0.75 / max(n_groups, 1), 0.35)
+    handles: list = []
+    labels: list[str] = []
+
+    for g_idx, group_label in enumerate(group_labels):
+        series = groups[group_label]
+        x_vals = [float(r[x_key]) for r in series]
+        indices = np.array([x_to_idx[v] for v in x_vals], dtype=float)
+        offset = (g_idx - (n_groups - 1) / 2.0) * bar_width
+        x_pos = indices + offset
+
+        bottoms = np.zeros(len(series), dtype=float)
+        for layer_idx, (col, label) in enumerate(layers):
+            heights = np.array([max(float(r[col]), 0.0) for r in series])
+            bars = ax.bar(
+                x_pos,
+                heights,
+                bar_width,
+                bottom=bottoms,
+                color=colors[layer_idx],
+                edgecolor="white",
+                linewidth=0.4,
+                label=label,
+            )
+            if g_idx == 0:
+                handles.append(bars)
+                labels.append(label)
+            bottoms += heights
+
+    tick_positions = np.arange(len(unique_x))
+    ax.set_xticks(tick_positions)
+    ax.set_xticklabels(x_tick_labels(x_key, unique_x))
+    ax.set_ylabel(ylabel)
+    ax.grid(True, axis="y", linestyle="--", alpha=0.35)
+    return handles, labels, group_labels
+
+
+def plot_stacked_breakdown(
+    rows: list[dict],
+    *,
+    x_key: str,
+    output: Path | None,
+    title: str | None,
+    show: bool,
+) -> None:
+    groups = group_rows(rows, x_key)
+
+    fig, (ax_exec, ax_infra) = plt.subplots(
+        2, 1,
+        figsize=(11, 8),
+        sharex=True,
+        gridspec_kw={"height_ratios": [3, 2]},
+    )
+
+    exec_handles, exec_labels, group_labels = draw_stacked_bars(
+        ax_exec,
+        groups,
+        EXECUTE_STACK_LAYERS,
+        EXECUTE_COLORS,
+        x_key,
+        ylabel="Execute time (ms)",
+    )
+    infra_handles, infra_labels, _ = draw_stacked_bars(
+        ax_infra,
+        groups,
+        INFRA_LAYERS,
+        INFRA_COLORS,
+        x_key,
+        ylabel="Setup / teardown (ms)",
+    )
+
+    x_labels = {
+        "L": "Limb count",
+        "N": "NTT size",
+        "L_arg": "Limb count",
+    }
+    ax_infra.set_xlabel(x_labels.get(x_key, x_key))
+
+    ax_exec.set_title(title or "GPU full multiply — timing breakdown")
+    ax_exec.text(
+        0.02, 0.98,
+        "Per-iteration execute (linear stack).\n"
+        "H2D + fwd pad+NTT is one parallel phase (streams overlap).",
+        transform=ax_exec.transAxes,
+        fontsize=8,
+        alpha=0.8,
+        verticalalignment="top",
+    )
+    ax_infra.text(
+        0.02, 0.98,
+        "Once-per-L setup / teardown (precompute omitted — amortized per step).",
+        transform=ax_infra.transAxes,
+        fontsize=8,
+        alpha=0.8,
+        verticalalignment="top",
+    )
+
+    n_groups = len(groups)
+    if n_groups > 1:
+        group_handles = [
+            plt.Line2D([0], [0], color="black", linewidth=0, marker="s",
+                       markerfacecolor="none", markeredgecolor="black",
+                       label=label)
+            for label in group_labels
+        ]
+        exec_legend = ax_exec.legend(
+            handles=exec_handles,
+            labels=exec_labels,
+            loc="upper left",
+            bbox_to_anchor=(1.02, 1.0),
+            fontsize=8,
+            title="Execute",
+        )
+        ax_exec.add_artist(exec_legend)
+        ax_exec.legend(
+            handles=group_handles,
+            loc="upper left",
+            bbox_to_anchor=(1.02, 0.55),
+            fontsize=8,
+            title="Series",
+        )
+        ax_infra.legend(
+            handles=infra_handles,
+            labels=infra_labels,
+            loc="upper left",
+            bbox_to_anchor=(1.02, 1.0),
+            fontsize=8,
+            title="Infra",
+        )
+    else:
+        ax_exec.legend(
+            handles=exec_handles,
+            labels=exec_labels,
+            loc="upper left",
+            bbox_to_anchor=(1.02, 1.0),
+            fontsize=8,
+            title="Execute",
+        )
+        ax_infra.legend(
+            handles=infra_handles,
+            labels=infra_labels,
+            loc="upper left",
+            bbox_to_anchor=(1.02, 1.0),
+            fontsize=8,
+            title="Infra",
+        )
+
+    fig.tight_layout()
+
+    if output is not None:
+        output.parent.mkdir(parents=True, exist_ok=True)
+        fig.savefig(output, dpi=150, bbox_inches="tight")
+        print(f"Wrote {output}")
+
+    if show:
+        plt.show()
+    else:
+        plt.close(fig)
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(
-        description="Plot gpu_multiply_bench.csv with error bars.",
+        description="Plot gpu_multiply_bench.csv (total + stacked breakdown).",
     )
     parser.add_argument(
         "csv",
@@ -213,7 +483,8 @@ def main() -> None:
         "-o", "--output",
         type=Path,
         default=None,
-        help="Output image path (default: <csv>.png)",
+        help="Total-timing image path (default: <csv>.png); "
+             "stacked breakdown -> <stem>_stacked.png",
     )
     parser.add_argument(
         "--x",
@@ -224,33 +495,65 @@ def main() -> None:
     parser.add_argument(
         "--error",
         choices=("stddev", "minmax", "band"),
-        default="minmax",
-        help="Error display: stddev, minmax (default), or band (shaded stddev)",
+        default="stddev",
+        help="Error display on total plot (default: stddev)",
     )
     parser.add_argument(
         "--title",
         default=None,
-        help="Plot title",
+        help="Title for total plot (stacked plot gets a derived title)",
+    )
+    parser.add_argument(
+        "--stacked-title",
+        default=None,
+        help="Title for stacked breakdown plot",
+    )
+    parser.add_argument(
+        "--no-stacked",
+        action="store_true",
+        help="Skip stacked breakdown plot",
     )
     parser.add_argument(
         "--show",
         action="store_true",
-        help="Show interactive plot window",
+        help="Show interactive plot windows",
     )
     args = parser.parse_args()
 
     csv_path = Path(args.csv)
-    output = args.output
-    if output is None:
-        output = csv_path.with_suffix(".png")
+    total_output = args.output if args.output is not None else csv_path.with_suffix(".png")
+    stacked_output = stacked_output_path(total_output)
 
-    rows = load_csv(csv_path)
-    plot_benchmark(
+    rows, has_breakdown = load_csv(csv_path)
+
+    plot_total(
         rows,
         x_key=args.x,
         error_mode=args.error,
-        output=output,
+        output=total_output,
         title=args.title,
+        show=args.show,
+    )
+
+    if args.no_stacked:
+        return
+
+    if not has_breakdown:
+        print(
+            "Skipping stacked plot: CSV lacks fine-grained timing columns "
+            "(re-run bench_full_multiply with current benchmark)."
+        )
+        return
+
+    stacked_title = args.stacked_title
+    if stacked_title is None and args.title is not None:
+        stacked_title = f"{args.title} — breakdown"
+
+    plot_stacked_breakdown(
+        rows,
+        x_key=args.x,
+        output=stacked_output,
+        title=stacked_title,
         show=args.show,
     )
 

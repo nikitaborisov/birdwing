@@ -3,6 +3,7 @@
 #include "zero_pad.h"
 #include "carry_prop.h"
 #include <cuda_runtime.h>
+#include <memory>
 #include <iostream>
 #include <vector>
 #include <cmath>
@@ -57,6 +58,92 @@ struct GPUTimer {
         return ms;
     }
 };
+
+namespace {
+
+struct StageProfiler {
+    bool on = false;
+
+    cudaEvent_t execute_start{};
+    cudaEvent_t execute_stop{};
+    cudaEvent_t h2d_start{};
+    cudaEvent_t h2d_stop_a{};
+    cudaEvent_t h2d_stop_b{};
+    cudaEvent_t fwd_start_a{};
+    cudaEvent_t fwd_stop_a{};
+    cudaEvent_t fwd_start_b{};
+    cudaEvent_t fwd_stop_b{};
+
+    unique_ptr<GPUTimer> mul_timer;
+    unique_ptr<GPUTimer> intt_timer;
+    unique_ptr<GPUTimer> crt_timer;
+    unique_ptr<GPUTimer> carry_timer;
+    unique_ptr<GPUTimer> d2h_timer;
+
+    explicit StageProfiler(bool active) : on(active) {
+        if (!on)
+            return;
+        cudaEventCreate(&execute_start);
+        cudaEventCreate(&execute_stop);
+        cudaEventCreate(&h2d_start);
+        cudaEventCreate(&h2d_stop_a);
+        cudaEventCreate(&h2d_stop_b);
+        cudaEventCreate(&fwd_start_a);
+        cudaEventCreate(&fwd_stop_a);
+        cudaEventCreate(&fwd_start_b);
+        cudaEventCreate(&fwd_stop_b);
+        mul_timer = make_unique<GPUTimer>();
+        intt_timer = make_unique<GPUTimer>();
+        crt_timer = make_unique<GPUTimer>();
+        carry_timer = make_unique<GPUTimer>();
+        d2h_timer = make_unique<GPUTimer>();
+    }
+
+    ~StageProfiler() {
+        if (!on)
+            return;
+        cudaEventDestroy(execute_start);
+        cudaEventDestroy(execute_stop);
+        cudaEventDestroy(h2d_start);
+        cudaEventDestroy(h2d_stop_a);
+        cudaEventDestroy(h2d_stop_b);
+        cudaEventDestroy(fwd_start_a);
+        cudaEventDestroy(fwd_stop_a);
+        cudaEventDestroy(fwd_start_b);
+        cudaEventDestroy(fwd_stop_b);
+    }
+
+    static float elapsed_ms(cudaEvent_t start, cudaEvent_t stop) {
+        float ms = 0.0f;
+        cudaEventSynchronize(stop);
+        cudaEventElapsedTime(&ms, start, stop);
+        return ms;
+    }
+
+    static float critical_path_ms(cudaEvent_t start,
+                                cudaEvent_t stop_a,
+                                cudaEvent_t stop_b) {
+        float a = elapsed_ms(start, stop_a);
+        float b = elapsed_ms(start, stop_b);
+        return max(a, b);
+    }
+
+    void fill(NTTTiming& out) const {
+        if (!on)
+            return;
+
+        out.h2d_ms = critical_path_ms(h2d_start, h2d_stop_a, h2d_stop_b);
+        out.fwd_pad_ntt_a_ms = elapsed_ms(fwd_start_a, fwd_stop_a);
+        out.fwd_pad_ntt_b_ms = elapsed_ms(fwd_start_b, fwd_stop_b);
+        out.fwd_pad_ntt_ms = max(out.fwd_pad_ntt_a_ms, out.fwd_pad_ntt_b_ms);
+        out.ingress_fwd_ms = max(
+            elapsed_ms(h2d_start, fwd_stop_a),
+            elapsed_ms(h2d_start, fwd_stop_b));
+        out.total_ms = elapsed_ms(execute_start, execute_stop);
+    }
+};
+
+} // namespace
 
 // helper for modular multiplication; promotes to 64 / 128 bits to prevent overflow and then reduces mod
 static TestDataType mod_mul(TestDataTypeUint a, TestDataTypeUint b, TestDataTypeUint mod) {
@@ -241,20 +328,23 @@ void execute_ntt_multiply(
     const uint32_t* a_pinned,
     const uint32_t* b_pinned,
     vector<TestDataTypeUint> &C_out,
-    __int128 M, __int128 M_half)
+    __int128 M, __int128 M_half,
+    NTTTiming* timing_out)
 {
+    const bool profile = timing_out != nullptr;
+#ifdef TIMING
+    const bool write_timing_csv = true;
+#else
+    const bool write_timing_csv = false;
+#endif
+    StageProfiler prof(profile || write_timing_csv);
+    NTTTiming timing{};
 
-    GPUTimer timer;
+    if (prof.on)
+        cudaEventRecord(prof.execute_start, ctx.stream_a);
 
-    #ifdef TIMING
-    float t_ntt   = 0.0f;
-    float t_mul   = 0.0f;
-    float t_intt  = 0.0f;
-    float t_crt   = 0.0f;
-    float t_carry = 0.0f;
-    #endif
-
-    timer.tic(ctx.stream_a);
+    if (prof.on)
+        cudaEventRecord(prof.h2d_start, ctx.stream_a);
 
     cudaMemcpyAsync(ctx.a_raw_dev, a_pinned,
                 ctx.L_A * sizeof(uint32_t),
@@ -262,6 +352,13 @@ void execute_ntt_multiply(
     cudaMemcpyAsync(ctx.b_raw_dev, b_pinned,
                 ctx.L_B * sizeof(uint32_t),
                 cudaMemcpyHostToDevice, ctx.stream_b);
+
+    if (prof.on) {
+        cudaEventRecord(prof.h2d_stop_a, ctx.stream_a);
+        cudaEventRecord(prof.h2d_stop_b, ctx.stream_b);
+        cudaEventRecord(prof.fwd_start_a, ctx.stream_a);
+        cudaEventRecord(prof.fwd_start_b, ctx.stream_b);
+    }
     
     #if DEBUG
     // verify inputs copied correctly
@@ -435,11 +532,13 @@ void execute_ntt_multiply(
     cudaStreamSynchronize(ctx.stream_a);
     cudaStreamSynchronize(ctx.stream_b);
 
-    #ifdef TIMING
-    t_ntt = timer.toc(ctx.stream_a);
-    #endif
+    if (prof.on) {
+        cudaEventRecord(prof.fwd_stop_a, ctx.stream_a);
+        cudaEventRecord(prof.fwd_stop_b, ctx.stream_b);
+    }
 
-    timer.tic(ctx.stream_a);
+    if (prof.on)
+        prof.mul_timer->tic(ctx.stream_a);
 
     for (int i = 0; i < NUM_MODULI; i++) {
         int threads = 256;
@@ -447,9 +546,8 @@ void execute_ntt_multiply(
         pointwise_mul_kernel<<<blocks, threads, 0, ctx.stream_a>>>(
             ctx.a_dev[i], ctx.b_dev[i], ctx.c_dev[i], moduli[i], ctx.N);
     }
-    #ifdef TIMING
-    t_mul = timer.toc(ctx.stream_a);
-    #endif
+    if (prof.on)
+        timing.pointwise_mul_ms = prof.mul_timer->toc(ctx.stream_a);
     
     #if DEBUG
     // verify pointwise mul by printing c_dev
@@ -470,7 +568,8 @@ void execute_ntt_multiply(
     }
     #endif
 
-    timer.tic(ctx.stream_a);
+    if (prof.on)
+        prof.intt_timer->tic(ctx.stream_a);
 
     // inverse
     for (int i = 0; i < NUM_MODULI; i++) {
@@ -559,11 +658,11 @@ void execute_ntt_multiply(
 
     cudaStreamSynchronize(ctx.stream_a);
 
-    #ifdef TIMING
-    t_intt = timer.toc(ctx.stream_a);
-    #endif
+    if (prof.on)
+        timing.intt_ms = prof.intt_timer->toc(ctx.stream_a);
 
-    timer.tic(ctx.stream_a);
+    if (prof.on)
+        prof.crt_timer->tic(ctx.stream_a);
 
     #if DEBUG
     for (int mod = 0; mod < NUM_MODULI; mod++) {
@@ -625,11 +724,11 @@ void execute_ntt_multiply(
     printf("M_half = (%llu,%llu)\n", MH_hi, MH_lo);
     #endif
 
-    #ifdef TIMING
-    t_crt = timer.toc(ctx.stream_a);
-    #endif
+    if (prof.on)
+        timing.crt_ms = prof.crt_timer->toc(ctx.stream_a);
 
-    timer.tic(ctx.stream_a);
+    if (prof.on)
+        prof.carry_timer->tic(ctx.stream_a);
 
     size_t num_segs = (ctx.N + CARRY_SEG - 1) / CARRY_SEG;
 
@@ -644,33 +743,53 @@ void execute_ntt_multiply(
 
     cudaStreamSynchronize(ctx.stream_a);
 
-    #ifdef TIMING
-    t_carry = timer.toc(ctx.stream_a);
-    #endif
+    if (prof.on)
+        timing.carry_ms = prof.carry_timer->toc(ctx.stream_a);
+
+    if (prof.on)
+        prof.d2h_timer->tic(0);
 
     cudaMemcpy(C_out.data(), ctx.d_out,
             (ctx.N + 1) * sizeof(TestDataTypeUint), cudaMemcpyDeviceToHost);
 
-    #ifdef TIMING
+    if (prof.on)
+        timing.d2h_ms = prof.d2h_timer->toc(0);
+
+    if (prof.on)
+        cudaEventRecord(prof.execute_stop, 0);
+
+    if (prof.on) {
+        prof.fill(timing);
+    }
+
+    if (timing_out)
+        *timing_out = timing;
+
+#ifdef TIMING
     static bool header_written = false;
 
     ofstream file("ntt_timing.csv", ios::app);
 
     if (!header_written) {
-        file << "N,L_A,L_B,NTT,MUL,INTT,CRT,CARRY,TOTAL\n";
+        file << "N,L_A,L_B,INGRESS_FWD,H2D,FWD_PAD_NTT,FWD_A,FWD_B,MUL,INTT,CRT,CARRY,D2H,TOTAL\n";
         header_written = true;
     }
 
     file << ctx.N << ","
         << ctx.L_A << ","
         << ctx.L_B << ","
-        << t_ntt << ","
-        << t_mul << ","
-        << t_intt << ","
-        << t_crt << ","
-        << t_carry << "\n";
-    
-    #endif
+        << timing.ingress_fwd_ms << ","
+        << timing.h2d_ms << ","
+        << timing.fwd_pad_ntt_ms << ","
+        << timing.fwd_pad_ntt_a_ms << ","
+        << timing.fwd_pad_ntt_b_ms << ","
+        << timing.pointwise_mul_ms << ","
+        << timing.intt_ms << ","
+        << timing.crt_ms << ","
+        << timing.carry_ms << ","
+        << timing.d2h_ms << ","
+        << timing.total_ms << "\n";
+#endif
 }
 
 void cleanup_ntt_context(NTTContext &ctx) {

@@ -1,8 +1,7 @@
 // bench/gpu_full_multiply_benchmark.cpp
 //
-// Benchmark the full GPU multiply pipeline (execute_ntt_multiply only).
-// Precomputation and context allocation are done once per L, outside the
-// timed region. A short warmup precedes timed iterations.
+// Benchmark the full GPU multiply pipeline with setup/teardown and per-stage
+// CUDA event timings from execute_ntt_multiply().
 //
 // Build:  make bench_full_32 | bench_full_64 | bench_full
 // Run:    ./build/bench_full_multiply_32 [--warmup N] [--iters N] [--csv FILE] [L ...]
@@ -79,6 +78,22 @@ static size_t resolve_limb_count(size_t L_arg)
     return L_arg;
 }
 
+static double host_elapsed_ms(
+    const chrono::high_resolution_clock::time_point& t0,
+    const chrono::high_resolution_clock::time_point& t1)
+{
+    return chrono::duration<double, milli>(t1 - t0).count();
+}
+
+template <typename Fn>
+static double time_host_ms(Fn&& fn)
+{
+    const auto t0 = chrono::high_resolution_clock::now();
+    fn();
+    const auto t1 = chrono::high_resolution_clock::now();
+    return host_elapsed_ms(t0, t1);
+}
+
 struct TimingStats {
     double mean_ms = 0.0;
     double stddev_ms = 0.0;
@@ -111,6 +126,29 @@ static TimingStats compute_stats(const vector<double>& samples)
     return s;
 }
 
+static TimingStats compute_stats_field(
+    const vector<NTTTiming>& samples,
+    float NTTTiming::*field)
+{
+    vector<double> values;
+    values.reserve(samples.size());
+    for (const NTTTiming& t : samples)
+        values.push_back(static_cast<double>(t.*field));
+    return compute_stats(values);
+}
+
+struct SetupTiming {
+    double pinned_ms = 0.0;
+    double precompute_ms = 0.0;
+    double alloc_ctx_ms = 0.0;
+};
+
+struct TeardownTiming {
+    double free_ctx_ms = 0.0;
+    double free_pre_ms = 0.0;
+    double free_pinned_ms = 0.0;
+};
+
 struct BenchRow {
     size_t L_arg = 0;
     size_t L = 0;
@@ -118,7 +156,21 @@ struct BenchRow {
     int logN = 0;
     int warmup = 0;
     int iters = 0;
-    TimingStats stats{};
+
+    SetupTiming setup{};
+    TeardownTiming teardown{};
+
+    TimingStats execute_total{};
+    TimingStats ingress_fwd{};
+    TimingStats h2d{};
+    TimingStats fwd_pad_ntt{};
+    TimingStats fwd_pad_ntt_a{};
+    TimingStats fwd_pad_ntt_b{};
+    TimingStats pointwise_mul{};
+    TimingStats intt{};
+    TimingStats crt{};
+    TimingStats carry{};
+    TimingStats d2h{};
 };
 
 static void usage(const char* prog)
@@ -134,7 +186,7 @@ static void usage(const char* prog)
          << "  --append     append rows to CSV instead of overwriting\n"
          << "  L ...        limb spec: if L < 64, use 1<<L limbs; else L limbs\n"
          << "               ranges inclusive: 16-24 -> 16,17,...,24\n"
-         << "               (default sweep: log2 sizes 6..25)\n";
+         << "               (default sweep: log2 sizes 6..22)\n";
 }
 
 static bool parse_size_t(const string& s, size_t& out)
@@ -187,39 +239,59 @@ static BenchRow benchmark_L(size_t L_arg, int warmup, int iters, uint64_t seed)
 
     uint32_t* a_pinned = nullptr;
     uint32_t* b_pinned = nullptr;
-    cudaMallocHost(&a_pinned, L_A * sizeof(uint32_t));
-    cudaMallocHost(&b_pinned, L_B * sizeof(uint32_t));
-    memcpy(a_pinned, A.data(), L_A * sizeof(uint32_t));
-    memcpy(b_pinned, B.data(), L_B * sizeof(uint32_t));
+
+    SetupTiming setup{};
+    setup.pinned_ms = time_host_ms([&] {
+        cudaMallocHost(&a_pinned, L_A * sizeof(uint32_t));
+        cudaMallocHost(&b_pinned, L_B * sizeof(uint32_t));
+        memcpy(a_pinned, A.data(), L_A * sizeof(uint32_t));
+        memcpy(b_pinned, B.data(), L_B * sizeof(uint32_t));
+    });
 
     unsigned __int128 M = 1;
     for (int j = 0; j < NUM_MODULI; j++)
         M *= moduli[j];
     const __int128 M_half = static_cast<__int128>(M >> 1);
 
-    NTTPrecomputed pre = precompute_ntt(N);
-    NTTContext ctx = allocate_ntt_context(pre, L_A, L_B);
+    NTTPrecomputed pre{};
+    setup.precompute_ms = time_host_ms([&] {
+        pre = precompute_ntt(N);
+    });
+
+    NTTContext ctx{};
+    setup.alloc_ctx_ms = time_host_ms([&] {
+        ctx = allocate_ntt_context(pre, L_A, L_B);
+    });
+
     vector<TestDataTypeUint> C_out(N + 1, 0);
 
     for (int i = 0; i < warmup; i++)
         execute_ntt_multiply(ctx, a_pinned, b_pinned, C_out, M, M_half);
 
-    vector<double> samples;
-    samples.reserve(static_cast<size_t>(iters));
+    vector<double> execute_samples;
+    vector<NTTTiming> stage_samples;
+    execute_samples.reserve(static_cast<size_t>(iters));
+    stage_samples.reserve(static_cast<size_t>(iters));
 
     for (int i = 0; i < iters; i++) {
-        const auto t0 = chrono::high_resolution_clock::now();
-        execute_ntt_multiply(ctx, a_pinned, b_pinned, C_out, M, M_half);
-        const auto t1 = chrono::high_resolution_clock::now();
-        const double ms =
-            chrono::duration<double, milli>(t1 - t0).count();
-        samples.push_back(ms);
+        NTTTiming timing{};
+        execute_ntt_multiply(
+            ctx, a_pinned, b_pinned, C_out, M, M_half, &timing);
+        execute_samples.push_back(static_cast<double>(timing.total_ms));
+        stage_samples.push_back(timing);
     }
 
-    cleanup_ntt_context(ctx);
-    cleanup_ntt_precomputed(pre);
-    cudaFreeHost(a_pinned);
-    cudaFreeHost(b_pinned);
+    TeardownTiming teardown{};
+    teardown.free_ctx_ms = time_host_ms([&] {
+        cleanup_ntt_context(ctx);
+    });
+    teardown.free_pre_ms = time_host_ms([&] {
+        cleanup_ntt_precomputed(pre);
+    });
+    teardown.free_pinned_ms = time_host_ms([&] {
+        cudaFreeHost(a_pinned);
+        cudaFreeHost(b_pinned);
+    });
 
     BenchRow row{};
     row.L_arg = L_arg;
@@ -228,7 +300,19 @@ static BenchRow benchmark_L(size_t L_arg, int warmup, int iters, uint64_t seed)
     row.logN = logN;
     row.warmup = warmup;
     row.iters = iters;
-    row.stats = compute_stats(samples);
+    row.setup = setup;
+    row.teardown = teardown;
+    row.execute_total = compute_stats(execute_samples);
+    row.ingress_fwd = compute_stats_field(stage_samples, &NTTTiming::ingress_fwd_ms);
+    row.h2d = compute_stats_field(stage_samples, &NTTTiming::h2d_ms);
+    row.fwd_pad_ntt = compute_stats_field(stage_samples, &NTTTiming::fwd_pad_ntt_ms);
+    row.fwd_pad_ntt_a = compute_stats_field(stage_samples, &NTTTiming::fwd_pad_ntt_a_ms);
+    row.fwd_pad_ntt_b = compute_stats_field(stage_samples, &NTTTiming::fwd_pad_ntt_b_ms);
+    row.pointwise_mul = compute_stats_field(stage_samples, &NTTTiming::pointwise_mul_ms);
+    row.intt = compute_stats_field(stage_samples, &NTTTiming::intt_ms);
+    row.crt = compute_stats_field(stage_samples, &NTTTiming::crt_ms);
+    row.carry = compute_stats_field(stage_samples, &NTTTiming::carry_ms);
+    row.d2h = compute_stats_field(stage_samples, &NTTTiming::d2h_ms);
     return row;
 }
 
@@ -241,8 +325,14 @@ static void write_csv(const string& path, const vector<BenchRow>& rows, bool app
         exit(1);
     }
 
-    if (write_header)
-        csv << "limb_bits,L_arg,L,N,logN,warmup,iters,mean_ms,stddev_ms,min_ms,max_ms\n";
+    if (write_header) {
+        csv << "limb_bits,L_arg,L,N,logN,warmup,iters,"
+            << "mean_ms,stddev_ms,min_ms,max_ms,"
+            << "setup_pinned_ms,setup_precompute_ms,setup_alloc_ms,"
+            << "teardown_free_ctx_ms,teardown_free_pre_ms,teardown_free_pinned_ms,"
+            << "ingress_fwd_mean_ms,h2d_mean_ms,fwd_pad_ntt_mean_ms,fwd_pad_ntt_a_mean_ms,fwd_pad_ntt_b_mean_ms,"
+            << "mul_mean_ms,intt_mean_ms,crt_mean_ms,carry_mean_ms,d2h_mean_ms\n";
+    }
     csv << fixed << setprecision(6);
 
     for (const BenchRow& row : rows) {
@@ -253,25 +343,63 @@ static void write_csv(const string& path, const vector<BenchRow>& rows, bool app
             << row.logN << ","
             << row.warmup << ","
             << row.iters << ","
-            << row.stats.mean_ms << ","
-            << row.stats.stddev_ms << ","
-            << row.stats.min_ms << ","
-            << row.stats.max_ms << "\n";
+            << row.execute_total.mean_ms << ","
+            << row.execute_total.stddev_ms << ","
+            << row.execute_total.min_ms << ","
+            << row.execute_total.max_ms << ","
+            << row.setup.pinned_ms << ","
+            << row.setup.precompute_ms << ","
+            << row.setup.alloc_ctx_ms << ","
+            << row.teardown.free_ctx_ms << ","
+            << row.teardown.free_pre_ms << ","
+            << row.teardown.free_pinned_ms << ","
+            << row.ingress_fwd.mean_ms << ","
+            << row.h2d.mean_ms << ","
+            << row.fwd_pad_ntt.mean_ms << ","
+            << row.fwd_pad_ntt_a.mean_ms << ","
+            << row.fwd_pad_ntt_b.mean_ms << ","
+            << row.pointwise_mul.mean_ms << ","
+            << row.intt.mean_ms << ","
+            << row.crt.mean_ms << ","
+            << row.carry.mean_ms << ","
+            << row.d2h.mean_ms << "\n";
     }
 }
 
 static void print_row(const BenchRow& row)
 {
+    const double setup_total = row.setup.pinned_ms + row.setup.precompute_ms
+                             + row.setup.alloc_ctx_ms;
+    const double teardown_total = row.teardown.free_ctx_ms + row.teardown.free_pre_ms
+                                + row.teardown.free_pinned_ms;
+
     cout << fixed << setprecision(3);
     cout << "L_arg=" << setw(3) << row.L_arg
          << "  L=" << setw(10) << row.L
          << "  N=" << setw(10) << row.N
-         << "  logN=" << setw(2) << row.logN
-         << "  mean=" << setw(10) << row.stats.mean_ms << " ms"
-         << "  stddev=" << setw(8) << row.stats.stddev_ms << " ms"
-         << "  min=" << setw(10) << row.stats.min_ms << " ms"
-         << "  max=" << setw(10) << row.stats.max_ms << " ms"
-         << "\n";
+         << "  logN=" << setw(2) << row.logN << "\n";
+    cout << "  setup:   pinned=" << setw(8) << row.setup.pinned_ms
+         << "  precompute=" << setw(8) << row.setup.precompute_ms
+         << "  alloc=" << setw(8) << row.setup.alloc_ctx_ms
+         << "  (total " << setup_total << " ms)\n";
+    cout << "  execute: mean=" << setw(8) << row.execute_total.mean_ms
+         << "  stddev=" << setw(7) << row.execute_total.stddev_ms
+         << "  min=" << setw(8) << row.execute_total.min_ms
+         << "  max=" << setw(8) << row.execute_total.max_ms << " ms\n";
+    cout << "    ingress_fwd=" << row.ingress_fwd.mean_ms
+         << " (h2d=" << row.h2d.mean_ms
+         << " fwd=" << row.fwd_pad_ntt.mean_ms
+         << " a=" << row.fwd_pad_ntt_a.mean_ms
+         << " b=" << row.fwd_pad_ntt_b.mean_ms << " — streams overlap, use ingress_fwd)"
+         << "  mul=" << row.pointwise_mul.mean_ms
+         << "  intt=" << row.intt.mean_ms
+         << "  crt=" << row.crt.mean_ms
+         << "  carry=" << row.carry.mean_ms
+         << "  d2h=" << row.d2h.mean_ms << " ms\n";
+    cout << "  teardown: free_ctx=" << setw(8) << row.teardown.free_ctx_ms
+         << "  free_pre=" << setw(8) << row.teardown.free_pre_ms
+         << "  free_pinned=" << setw(8) << row.teardown.free_pinned_ms
+         << "  (total " << teardown_total << " ms)\n";
 }
 
 // ---------------------------------------------------------------------------
