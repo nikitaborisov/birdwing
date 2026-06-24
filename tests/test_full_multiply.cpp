@@ -195,7 +195,7 @@ vector<TestDataTypeUint> gmp_mul(
     // ---- Import B ----
     auto t3 = clock::now();
     #if LIMB_BITS == 64
-    vector<uint64_t> B64(A.begin(), A.end());
+    vector<uint64_t> B64(B.begin(), B.end());
     mpz_import(b, B64.size(), -1, sizeof(uint64_t), 0, 0, B64.data());
     #else
     mpz_import(b, B.size(), -1, sizeof(uint32_t), 0, 0, B.data());
@@ -375,7 +375,7 @@ void benchmark_vs_gmp(size_t L)
     host_multiply_merge(A, B, warm, duration);
     C_gmp = gmp_mul(A, B);
 
-    const int ITERS = 100;
+    const int ITERS = 20;
     double gpu_time = 0.0, gmp_time = 0.0;
     double gpu_time_sq = 0.0, gmp_time_sq = 0.0;
 
