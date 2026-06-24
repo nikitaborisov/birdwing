@@ -269,9 +269,9 @@ int main() {
 
     // Use your actual moduli from config
     #if LIMB_BITS == 64
-    // 62-bit NTT-friendly primes: p = k * 2^M + 1, M >= 23
-    vector<TestDataTypeUint> moduli_vec = {0x6723cbb800001, 0x6723cb6800001};
-    vector<TestDataTypeUint> roots_of_unity_2_23 = {11, 6};
+    // 59-bit NTT-friendly primes: p = k * 2^33 + 1
+    vector<TestDataTypeUint> moduli_vec = {0x400002600000001ULL, 0x400004200000001ULL};
+    vector<TestDataTypeUint> roots_of_unity_2_23 = {273765203699653965ULL, 26231613454922890ULL};
     #else
     vector<TestDataTypeUint> moduli_vec = {0x23800001, 0x26800001, 0x2d000001};
     vector<TestDataTypeUint> roots_of_unity_2_23 = {663, 721, 19};

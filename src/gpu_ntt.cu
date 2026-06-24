@@ -26,9 +26,9 @@ using namespace gpuntt;
 #endif
 
 #if LIMB_BITS == 64
-    // 62-bit NTT-friendly primes: p = k * 2^M + 1, M >= 23
-    vector<TestDataTypeUint> moduli = {0x6723cbb800001, 0x6723cb6800001};
-    vector<TestDataTypeUint> roots_of_unity_max = {622482970039944, 1317955505843176};
+    // 59-bit NTT-friendly primes: p = k * 2^33 + 1
+    vector<TestDataTypeUint> moduli = {0x400002600000001ULL, 0x400004200000001ULL};
+    vector<TestDataTypeUint> roots_of_unity_max = {273765203699653965ULL, 26231613454922890ULL};
 #else
     vector<TestDataTypeUint> moduli = {0x2d000001, 0x23800001, 0x26800001};
     vector<TestDataTypeUint> roots_of_unity_max = {663, 721, 19};
