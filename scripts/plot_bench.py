@@ -43,20 +43,34 @@ SEQUENTIAL_EXECUTE_COLUMNS = (
 
 INFRA_LAYERS: tuple[tuple[str, str], ...] = (
     ("setup_pinned_ms", "Setup: pinned"),
+    ("upload_twiddle_ms", "Upload: twiddles"),
+    ("upload_mod_constants_ms", "Upload: mod/n⁻¹"),
+    ("upload_garner_ms", "Upload: garner"),
     ("setup_alloc_ms", "Setup: alloc"),
     ("teardown_free_ctx_ms", "Teardown: free ctx"),
     ("teardown_free_pre_ms", "Teardown: free pre"),
     ("teardown_free_pinned_ms", "Teardown: free pinned"),
 )
 
+PRECOMPUTE_LAYERS: tuple[tuple[str, str], ...] = (
+    ("pre_factors_ms", "Factors"),
+    ("pre_params_ms", "NTTParameters"),
+    ("pre_twiddle_host_ms", "Twiddle (host)"),
+    ("pre_garner_host_ms", "Garner (host)"),
+)
+
 INFRA_COLUMNS = {key for key, _ in INFRA_LAYERS}
+PRECOMPUTE_COLUMNS = {key for key, _ in PRECOMPUTE_LAYERS}
 EXECUTE_STACK_COLUMNS = {key for key, _ in EXECUTE_STACK_LAYERS}
-OPTIONAL_BREAKDOWN_COLUMNS = EXECUTE_STACK_COLUMNS | INFRA_COLUMNS | EXECUTE_DIAG_COLUMNS
+OPTIONAL_BREAKDOWN_COLUMNS = (
+    EXECUTE_STACK_COLUMNS | INFRA_COLUMNS | PRECOMPUTE_COLUMNS | EXECUTE_DIAG_COLUMNS
+)
 
 EXECUTE_COLORS = [plt.cm.tab10(i) for i in range(len(EXECUTE_STACK_LAYERS))]
 
-# tab20 — distinct from execute tab10 palette
+# tab20 — distinct palettes per panel
 INFRA_COLORS = [plt.cm.tab20(i + 2) for i in range(len(INFRA_LAYERS))]
+PRECOMPUTE_COLORS = [plt.cm.Set2(i) for i in range(len(PRECOMPUTE_LAYERS))]
 
 
 def derive_ingress_fwd(row: dict) -> float:
@@ -70,19 +84,35 @@ def derive_ingress_fwd(row: dict) -> float:
 def enrich_breakdown_row(entry: dict) -> None:
     if "ingress_fwd_mean_ms" not in entry:
         entry["ingress_fwd_mean_ms"] = derive_ingress_fwd(entry)
+    # Legacy CSV: single precompute total without stage columns.
+    if "pre_factors_ms" not in entry and "setup_precompute_ms" in entry:
+        entry["pre_twiddle_host_ms"] = float(entry["setup_precompute_ms"])
 
 
 def has_breakdown_columns(fieldnames: list[str] | None) -> bool:
     if fieldnames is None:
         return False
     names = set(fieldnames)
-    if not INFRA_COLUMNS.issubset(names):
-        return False
     if not set(SEQUENTIAL_EXECUTE_COLUMNS).issubset(names):
         return False
-    return (
+    has_execute = (
         "ingress_fwd_mean_ms" in names
         or EXECUTE_DIAG_COLUMNS.intersection(names)
+    )
+    has_infra = INFRA_COLUMNS.issubset(names) or {
+        "setup_pinned_ms", "setup_alloc_ms",
+        "teardown_free_ctx_ms", "teardown_free_pinned_ms",
+    }.issubset(names)
+    return has_execute and has_infra
+
+
+def has_precompute_columns(fieldnames: list[str] | None) -> bool:
+    if fieldnames is None:
+        return False
+    names = set(fieldnames)
+    return (
+        PRECOMPUTE_COLUMNS.issubset(names)
+        or "setup_precompute_ms" in names
     )
 
 
@@ -112,6 +142,8 @@ def load_csv(path: Path) -> tuple[list[dict], bool]:
                 for key in OPTIONAL_BREAKDOWN_COLUMNS:
                     if key in row:
                         entry[key] = float(row[key])
+                if "setup_precompute_ms" in row:
+                    entry["setup_precompute_ms"] = float(row["setup_precompute_ms"])
                 enrich_breakdown_row(entry)
             rows.append(entry)
 
@@ -300,6 +332,7 @@ def draw_stacked_bars(
     x_key: str,
     *,
     ylabel: str,
+    show_xlabels: bool = True,
 ) -> tuple[list, list[str], list[str]]:
     n_groups = len(groups)
     group_labels = sorted(groups)
@@ -322,7 +355,9 @@ def draw_stacked_bars(
 
         bottoms = np.zeros(len(series), dtype=float)
         for layer_idx, (col, label) in enumerate(layers):
-            heights = np.array([max(float(r[col]), 0.0) for r in series])
+            heights = np.array([
+                max(float(r.get(col, 0.0)), 0.0) for r in series
+            ])
             bars = ax.bar(
                 x_pos,
                 heights,
@@ -340,7 +375,11 @@ def draw_stacked_bars(
 
     tick_positions = np.arange(len(unique_x))
     ax.set_xticks(tick_positions)
-    ax.set_xticklabels(x_tick_labels(x_key, unique_x))
+    if show_xlabels:
+        ax.set_xticklabels(x_tick_labels(x_key, unique_x))
+    else:
+        ax.set_xticklabels([])
+        ax.tick_params(axis="x", length=0)
     ax.set_ylabel(ylabel)
     ax.grid(True, axis="y", linestyle="--", alpha=0.35)
     return handles, labels, group_labels
@@ -353,58 +392,94 @@ def plot_stacked_breakdown(
     output: Path | None,
     title: str | None,
     show: bool,
+    has_precompute: bool,
 ) -> None:
     groups = group_rows(rows, x_key)
 
-    fig, (ax_exec, ax_infra) = plt.subplots(
-        2, 1,
-        figsize=(11, 8),
-        sharex=True,
-        gridspec_kw={"height_ratios": [3, 2]},
-    )
+    if has_precompute:
+        fig, (ax_mult, ax_setup, ax_pre) = plt.subplots(
+            3, 1,
+            figsize=(11, 11),
+            sharex=True,
+            gridspec_kw={"height_ratios": [3, 2, 4]},
+        )
+    else:
+        fig, (ax_mult, ax_setup) = plt.subplots(
+            2, 1,
+            figsize=(11, 8),
+            sharex=True,
+            gridspec_kw={"height_ratios": [3, 2]},
+        )
+        ax_pre = None
 
-    exec_handles, exec_labels, group_labels = draw_stacked_bars(
-        ax_exec,
+    mult_handles, mult_labels, group_labels = draw_stacked_bars(
+        ax_mult,
         groups,
         EXECUTE_STACK_LAYERS,
         EXECUTE_COLORS,
         x_key,
-        ylabel="Execute time (ms)",
+        ylabel="Multiply (ms)",
+        show_xlabels=False,
     )
-    infra_handles, infra_labels, _ = draw_stacked_bars(
-        ax_infra,
+    setup_handles, setup_labels, _ = draw_stacked_bars(
+        ax_setup,
         groups,
         INFRA_LAYERS,
         INFRA_COLORS,
         x_key,
         ylabel="Setup / teardown (ms)",
+        show_xlabels=False,
     )
+
+    pre_handles: list = []
+    pre_labels: list[str] = []
+    if ax_pre is not None:
+        pre_handles, pre_labels, _ = draw_stacked_bars(
+            ax_pre,
+            groups,
+            PRECOMPUTE_LAYERS,
+            PRECOMPUTE_COLORS,
+            x_key,
+            ylabel="Precompute (ms)",
+            show_xlabels=True,
+        )
 
     x_labels = {
         "L": "Limb count",
         "N": "NTT size",
         "L_arg": "Limb count",
     }
-    ax_infra.set_xlabel(x_labels.get(x_key, x_key))
+    if ax_pre is not None:
+        ax_pre.set_xlabel(x_labels.get(x_key, x_key))
+    else:
+        ax_setup.set_xlabel(x_labels.get(x_key, x_key))
 
-    ax_exec.set_title(title or "GPU full multiply — timing breakdown")
-    ax_exec.text(
+    ax_mult.set_title(title or "GPU full multiply — timing breakdown")
+    ax_mult.text(
         0.02, 0.98,
-        "Per-iteration execute (linear stack).\n"
-        "H2D + fwd pad+NTT is one parallel phase (streams overlap).",
-        transform=ax_exec.transAxes,
+        "Multiply bucket — per-iteration mean.",
+        transform=ax_mult.transAxes,
         fontsize=8,
         alpha=0.8,
         verticalalignment="top",
     )
-    ax_infra.text(
+    ax_setup.text(
         0.02, 0.98,
-        "Once-per-L setup / teardown (precompute omitted — amortized per step).",
-        transform=ax_infra.transAxes,
+        "Setup / teardown — once per L (amortize over many multiplies at same size).",
+        transform=ax_setup.transAxes,
         fontsize=8,
         alpha=0.8,
         verticalalignment="top",
     )
+    if ax_pre is not None:
+        ax_pre.text(
+            0.02, 0.98,
+            "Precompute bucket — host-only, once per N.",
+            transform=ax_pre.transAxes,
+            fontsize=8,
+            alpha=0.8,
+            verticalalignment="top",
+        )
 
     n_groups = len(groups)
     if n_groups > 1:
@@ -414,47 +489,65 @@ def plot_stacked_breakdown(
                        label=label)
             for label in group_labels
         ]
-        exec_legend = ax_exec.legend(
-            handles=exec_handles,
-            labels=exec_labels,
+        mult_legend = ax_mult.legend(
+            handles=mult_handles,
+            labels=mult_labels,
             loc="upper left",
             bbox_to_anchor=(1.02, 1.0),
-            fontsize=8,
-            title="Execute",
+            fontsize=7,
+            title="Multiply",
         )
-        ax_exec.add_artist(exec_legend)
-        ax_exec.legend(
+        ax_mult.add_artist(mult_legend)
+        ax_mult.legend(
             handles=group_handles,
             loc="upper left",
-            bbox_to_anchor=(1.02, 0.55),
-            fontsize=8,
+            bbox_to_anchor=(1.02, 0.45),
+            fontsize=7,
             title="Series",
         )
-        ax_infra.legend(
-            handles=infra_handles,
-            labels=infra_labels,
+        ax_setup.legend(
+            handles=setup_handles,
+            labels=setup_labels,
             loc="upper left",
             bbox_to_anchor=(1.02, 1.0),
-            fontsize=8,
-            title="Infra",
+            fontsize=7,
+            title="Setup / teardown",
         )
+        if ax_pre is not None:
+            ax_pre.legend(
+                handles=pre_handles,
+                labels=pre_labels,
+                loc="upper left",
+                bbox_to_anchor=(1.02, 1.0),
+                fontsize=7,
+                title="Precompute",
+            )
     else:
-        ax_exec.legend(
-            handles=exec_handles,
-            labels=exec_labels,
+        ax_mult.legend(
+            handles=mult_handles,
+            labels=mult_labels,
             loc="upper left",
             bbox_to_anchor=(1.02, 1.0),
-            fontsize=8,
-            title="Execute",
+            fontsize=7,
+            title="Multiply",
         )
-        ax_infra.legend(
-            handles=infra_handles,
-            labels=infra_labels,
+        ax_setup.legend(
+            handles=setup_handles,
+            labels=setup_labels,
             loc="upper left",
             bbox_to_anchor=(1.02, 1.0),
-            fontsize=8,
-            title="Infra",
+            fontsize=7,
+            title="Setup / teardown",
         )
+        if ax_pre is not None:
+            ax_pre.legend(
+                handles=pre_handles,
+                labels=pre_labels,
+                loc="upper left",
+                bbox_to_anchor=(1.02, 1.0),
+                fontsize=7,
+                title="Precompute",
+            )
 
     fig.tight_layout()
 
@@ -525,6 +618,10 @@ def main() -> None:
     stacked_output = stacked_output_path(total_output)
 
     rows, has_breakdown = load_csv(csv_path)
+    fieldnames: list[str] | None = None
+    with csv_path.open(newline="") as f:
+        reader = csv.DictReader(f)
+        fieldnames = list(reader.fieldnames or [])
 
     plot_total(
         rows,
@@ -555,6 +652,7 @@ def main() -> None:
         output=stacked_output,
         title=stacked_title,
         show=args.show,
+        has_precompute=has_precompute_columns(fieldnames),
     )
 
 

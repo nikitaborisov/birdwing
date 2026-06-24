@@ -151,7 +151,10 @@ static TimingStats compute_stats_field(
 struct SetupTiming {
     double pinned_ms = 0.0;
     double precompute_ms = 0.0;
+    double upload_ms = 0.0;
     double alloc_ctx_ms = 0.0;
+    PrecomputeTiming precompute{};
+    SetupUploadTiming upload{};
 };
 
 struct TeardownTiming {
@@ -265,9 +268,15 @@ static BenchRow benchmark_L(size_t L_arg, int warmup, int iters, uint64_t seed)
     const __int128 M_half = static_cast<__int128>(M >> 1);
 
     NTTPrecomputed pre{};
-    setup.precompute_ms = time_host_ms([&] {
-        pre = precompute_ntt(N);
-    });
+    PrecomputeTiming pre_timing{};
+    pre = precompute_ntt(N, &pre_timing);
+    setup.precompute = pre_timing;
+    setup.precompute_ms = pre_timing.total_ms;
+
+    SetupUploadTiming upload_timing{};
+    upload_ntt_precomputed(pre, &upload_timing);
+    setup.upload = upload_timing;
+    setup.upload_ms = upload_timing.total_ms;
 
     NTTContext ctx{};
     setup.alloc_ctx_ms = time_host_ms([&] {
@@ -339,7 +348,9 @@ static void write_csv(const string& path, const vector<BenchRow>& rows, bool app
     if (write_header) {
         csv << "limb_bits,L_arg,L,N,logN,warmup,iters,"
             << "mean_ms,stddev_ms,min_ms,max_ms,"
-            << "setup_pinned_ms,setup_precompute_ms,setup_alloc_ms,"
+            << "setup_pinned_ms,setup_precompute_ms,setup_upload_ms,setup_alloc_ms,"
+            << "pre_factors_ms,pre_params_ms,pre_twiddle_host_ms,pre_garner_host_ms,"
+            << "upload_twiddle_ms,upload_mod_constants_ms,upload_garner_ms,"
             << "teardown_free_ctx_ms,teardown_free_pre_ms,teardown_free_pinned_ms,"
             << "ingress_fwd_mean_ms,h2d_mean_ms,fwd_pad_ntt_mean_ms,fwd_pad_ntt_a_mean_ms,fwd_pad_ntt_b_mean_ms,"
             << "mul_mean_ms,intt_mean_ms,crt_mean_ms,carry_mean_ms,d2h_mean_ms\n";
@@ -360,7 +371,15 @@ static void write_csv(const string& path, const vector<BenchRow>& rows, bool app
             << row.execute_total.max_ms << ","
             << row.setup.pinned_ms << ","
             << row.setup.precompute_ms << ","
+            << row.setup.upload_ms << ","
             << row.setup.alloc_ctx_ms << ","
+            << row.setup.precompute.factors_ms << ","
+            << row.setup.precompute.params_ms << ","
+            << row.setup.precompute.twiddle_host_ms << ","
+            << row.setup.precompute.garner_host_ms << ","
+            << row.setup.upload.twiddle_upload_ms << ","
+            << row.setup.upload.mod_constants_ms << ","
+            << row.setup.upload.garner_upload_ms << ","
             << row.teardown.free_ctx_ms << ","
             << row.teardown.free_pre_ms << ","
             << row.teardown.free_pinned_ms << ","
@@ -380,7 +399,7 @@ static void write_csv(const string& path, const vector<BenchRow>& rows, bool app
 static void print_row(const BenchRow& row)
 {
     const double setup_total = row.setup.pinned_ms + row.setup.precompute_ms
-                             + row.setup.alloc_ctx_ms;
+                             + row.setup.upload_ms + row.setup.alloc_ctx_ms;
     const double teardown_total = row.teardown.free_ctx_ms + row.teardown.free_pre_ms
                                 + row.teardown.free_pinned_ms;
 
@@ -391,8 +410,16 @@ static void print_row(const BenchRow& row)
          << "  logN=" << setw(2) << row.logN << "\n";
     cout << "  setup:   pinned=" << setw(8) << row.setup.pinned_ms
          << "  precompute=" << setw(8) << row.setup.precompute_ms
+         << "  upload=" << setw(8) << row.setup.upload_ms
          << "  alloc=" << setw(8) << row.setup.alloc_ctx_ms
          << "  (total " << setup_total << " ms)\n";
+    cout << "    pre: factors=" << row.setup.precompute.factors_ms
+         << "  params=" << row.setup.precompute.params_ms
+         << "  twiddle_host=" << row.setup.precompute.twiddle_host_ms
+         << "  garner_host=" << row.setup.precompute.garner_host_ms << " ms\n";
+    cout << "    upload: twiddle=" << row.setup.upload.twiddle_upload_ms
+         << "  mod_constants=" << row.setup.upload.mod_constants_ms
+         << "  garner=" << row.setup.upload.garner_upload_ms << " ms\n";
     cout << "  execute: mean=" << setw(8) << row.execute_total.mean_ms
          << "  stddev=" << setw(7) << row.execute_total.stddev_ms
          << "  min=" << setw(8) << row.execute_total.min_ms

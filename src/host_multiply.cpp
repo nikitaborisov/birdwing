@@ -53,6 +53,7 @@ void host_multiply_merge(const vector<uint32_t> &A, const vector<uint32_t> &B, v
     NTTPrecomputed pre = precompute_ntt(N);
 
     auto t0 = chrono::high_resolution_clock::now();
+    upload_ntt_precomputed(pre);
     NTTContext ctx = allocate_ntt_context(pre, L_A, L_B);
     execute_ntt_multiply(ctx, a_pinned, b_pinned, C_out, M, M_half);
     auto t1 = chrono::high_resolution_clock::now();

@@ -3,6 +3,7 @@
 #include "zero_pad.h"
 #include "carry_prop.h"
 #include <cuda_runtime.h>
+#include <chrono>
 #include <memory>
 #include <iostream>
 #include <vector>
@@ -224,64 +225,154 @@ __global__ void pointwise_mul_kernel(TestDataTypeUint* A,
     }
 }
 
-NTTPrecomputed precompute_ntt(size_t N) {
+NTTPrecomputed precompute_ntt(size_t N, PrecomputeTiming* timing_out) {
+    using clock = chrono::high_resolution_clock;
+    const auto wall_start = clock::now();
+
+    auto elapsed_ms = [](const clock::time_point& t0,
+                         const clock::time_point& t1) -> float {
+        return chrono::duration<float, milli>(t1 - t0).count();
+    };
+
+    const bool profile = timing_out != nullptr;
+    float params_ms = 0.0f;
+    float twiddle_host_ms = 0.0f;
+
     ensure_ntt_size_supported(N);
 
     NTTPrecomputed pre;
     pre.N    = N;
     pre.logN = (int)log2((double)N);
+    pre.gpu_uploaded = false;
 
     pre.params.resize(NUM_MODULI);
-    pre.forward_omega_dev.resize(NUM_MODULI);
-    pre.inverse_omega_dev.resize(NUM_MODULI);
-    pre.modulus_dev.resize(NUM_MODULI);
-    pre.ninv_dev.resize(NUM_MODULI);
+    pre.forward_omega_host.resize(NUM_MODULI);
+    pre.inverse_omega_host.resize(NUM_MODULI);
+    pre.forward_omega_dev.assign(NUM_MODULI, nullptr);
+    pre.inverse_omega_dev.assign(NUM_MODULI, nullptr);
+    pre.modulus_dev.assign(NUM_MODULI, nullptr);
+    pre.ninv_dev.assign(NUM_MODULI, nullptr);
 
+    auto t_factors_start = clock::now();
     auto factors = generate_factors_for_N(pre.logN);
+    const auto t_factors_end = clock::now();
 
     for (int i = 0; i < NUM_MODULI; i++) {
+        auto t_params_start = clock::now();
         pre.params[i] = NTTParameters<TestDataType>(
             pre.logN, factors[i], ReductionPolynomial::X_N_minus);
+        const auto t_params_end = clock::now();
+        if (profile)
+            params_ms += elapsed_ms(t_params_start, t_params_end);
+
         auto &p = pre.params[i];
 
-        // forward omega
-        auto fwd = p.gpu_root_of_unity_table_generator(p.forward_root_of_unity_table);
+        auto t_twiddle_host_start = clock::now();
+        pre.forward_omega_host[i] =
+            p.gpu_root_of_unity_table_generator(p.forward_root_of_unity_table);
+        pre.inverse_omega_host[i] =
+            p.gpu_root_of_unity_table_generator(p.inverse_root_of_unity_table);
+        const auto t_twiddle_host_end = clock::now();
+        if (profile)
+            twiddle_host_ms += elapsed_ms(t_twiddle_host_start, t_twiddle_host_end);
+    }
+
+    auto t_garner_start = clock::now();
+    pre.garner = compute_garner_params(moduli);
+    const auto wall_end = clock::now();
+
+    if (profile) {
+        timing_out->factors_ms = elapsed_ms(t_factors_start, t_factors_end);
+        timing_out->params_ms = params_ms;
+        timing_out->twiddle_host_ms = twiddle_host_ms;
+        timing_out->garner_host_ms = elapsed_ms(t_garner_start, wall_end);
+        timing_out->total_ms = elapsed_ms(wall_start, wall_end);
+    }
+
+    return pre;
+}
+
+void upload_ntt_precomputed(NTTPrecomputed& pre, SetupUploadTiming* timing_out) {
+    using clock = chrono::high_resolution_clock;
+    const auto wall_start = clock::now();
+
+    auto elapsed_ms = [](const clock::time_point& t0,
+                         const clock::time_point& t1) -> float {
+        return chrono::duration<float, milli>(t1 - t0).count();
+    };
+
+    const bool profile = timing_out != nullptr;
+    float twiddle_upload_ms = 0.0f;
+    float mod_constants_ms = 0.0f;
+
+    if (pre.gpu_uploaded)
+        return;
+
+    for (int i = 0; i < NUM_MODULI; i++) {
+        auto &p = pre.params[i];
+        const auto &fwd = pre.forward_omega_host[i];
+        const auto &inv = pre.inverse_omega_host[i];
+
+        auto t_twiddle_upload_start = clock::now();
         cudaMalloc(&pre.forward_omega_dev[i],
                    p.root_of_unity_size * sizeof(Root<TestDataType>));
         cudaMemcpy(pre.forward_omega_dev[i], fwd.data(),
                    p.root_of_unity_size * sizeof(Root<TestDataType>),
                    cudaMemcpyHostToDevice);
 
-        // inverse omega
-        auto inv = p.gpu_root_of_unity_table_generator(p.inverse_root_of_unity_table);
         cudaMalloc(&pre.inverse_omega_dev[i],
                    p.root_of_unity_size * sizeof(Root<TestDataType>));
         cudaMemcpy(pre.inverse_omega_dev[i], inv.data(),
                    p.root_of_unity_size * sizeof(Root<TestDataType>),
                    cudaMemcpyHostToDevice);
+        const auto t_twiddle_upload_end = clock::now();
+        if (profile)
+            twiddle_upload_ms += elapsed_ms(t_twiddle_upload_start, t_twiddle_upload_end);
 
-        // modulus
+        auto t_mod_constants_start = clock::now();
         cudaMalloc(&pre.modulus_dev[i], sizeof(Modulus<TestDataType>));
         Modulus<TestDataType> mod_host[1] = {p.modulus};
         cudaMemcpy(pre.modulus_dev[i], mod_host,
                    sizeof(Modulus<TestDataType>), cudaMemcpyHostToDevice);
 
-        // n inverse
         cudaMalloc(&pre.ninv_dev[i], sizeof(Ninverse<TestDataType>));
         Ninverse<TestDataType> ninv_host[1] = {p.n_inv};
         cudaMemcpy(pre.ninv_dev[i], ninv_host,
                    sizeof(Ninverse<TestDataType>), cudaMemcpyHostToDevice);
+        const auto t_mod_constants_end = clock::now();
+        if (profile)
+            mod_constants_ms += elapsed_ms(t_mod_constants_start, t_mod_constants_end);
     }
 
-    pre.garner = compute_garner_params(moduli);
-    upload_garner_params(pre.garner);
+    if (profile) {
+        const auto t_sync_start = clock::now();
+        cudaDeviceSynchronize();
+        twiddle_upload_ms += elapsed_ms(t_sync_start, clock::now());
+    } else {
+        cudaDeviceSynchronize();
+    }
 
-    cudaDeviceSynchronize();
-    return pre;
+    auto t_garner_upload_start = clock::now();
+    upload_garner_params(pre.garner);
+    const auto wall_end = clock::now();
+
+    pre.gpu_uploaded = true;
+
+    if (profile) {
+        timing_out->twiddle_upload_ms = twiddle_upload_ms;
+        timing_out->mod_constants_ms = mod_constants_ms;
+        timing_out->garner_upload_ms = elapsed_ms(t_garner_upload_start, wall_end);
+        timing_out->total_ms = elapsed_ms(wall_start, wall_end);
+    }
 }
 
 // now allocate only owns the mutable buffers
 NTTContext allocate_ntt_context(const NTTPrecomputed &pre, size_t L_A, size_t L_B) {
+    if (!pre.gpu_uploaded) {
+        cerr << "[NTT] allocate_ntt_context: call upload_ntt_precomputed first\n";
+        exit(1);
+    }
+
     NTTContext ctx;
     ctx.N    = pre.N;
     ctx.logN = pre.logN;
@@ -809,10 +900,18 @@ void cleanup_ntt_context(NTTContext &ctx) {
 }
 
 void cleanup_ntt_precomputed(NTTPrecomputed &pre) {
+    if (!pre.gpu_uploaded)
+        return;
+
     for (int i = 0; i < NUM_MODULI; i++) {
         cudaFree(pre.forward_omega_dev[i]);
         cudaFree(pre.inverse_omega_dev[i]);
         cudaFree(pre.modulus_dev[i]);
         cudaFree(pre.ninv_dev[i]);
+        pre.forward_omega_dev[i] = nullptr;
+        pre.inverse_omega_dev[i] = nullptr;
+        pre.modulus_dev[i] = nullptr;
+        pre.ninv_dev[i] = nullptr;
     }
+    pre.gpu_uploaded = false;
 }

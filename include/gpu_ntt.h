@@ -45,18 +45,41 @@ struct NTTContext {
     int64_t*    d_seg_carry;
 };
 
+// Host precompute for transform size N. GPU pointers are null until
+// upload_ntt_precomputed() is called (setup bucket).
 struct NTTPrecomputed {
 	size_t N;
 	int logN;
 	vector<NTTParameters<TestDataType>> params;
+	vector<vector<Root<TestDataType>>> forward_omega_host;
+	vector<vector<Root<TestDataType>>> inverse_omega_host;
+	CRTGarnerParams garner;
+	bool gpu_uploaded = false;
 	vector<Root<TestDataType>*>         forward_omega_dev;
 	vector<Root<TestDataType>*>         inverse_omega_dev;
 	vector<Modulus<TestDataType>*>    modulus_dev;
 	vector<Ninverse<TestDataType>*> ninv_dev;
-	CRTGarnerParams garner;
 };
 
-NTTPrecomputed precompute_ntt(size_t N);
+// Host-only precompute_ntt breakdown (ms).
+struct PrecomputeTiming {
+	float factors_ms = 0.0f;
+	float params_ms = 0.0f;
+	float twiddle_host_ms = 0.0f;
+	float garner_host_ms = 0.0f;
+	float total_ms = 0.0f;
+};
+
+// GPU upload of precomputed tables (setup bucket).
+struct SetupUploadTiming {
+	float twiddle_upload_ms = 0.0f;
+	float mod_constants_ms = 0.0f;
+	float garner_upload_ms = 0.0f;
+	float total_ms = 0.0f;
+};
+
+NTTPrecomputed precompute_ntt(size_t N, PrecomputeTiming* timing_out = nullptr);
+void upload_ntt_precomputed(NTTPrecomputed& pre, SetupUploadTiming* timing_out = nullptr);
 NTTContext allocate_ntt_context(const NTTPrecomputed &pre, size_t L_A, size_t L_B);
 
 // Per-invocation GPU stage timings (CUDA events, ms).
