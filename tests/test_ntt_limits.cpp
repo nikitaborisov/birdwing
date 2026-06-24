@@ -173,7 +173,7 @@ static void test_crt_coefficient_bound()
 #elif defined(NATIVE_HOST_LIMBS)
     const size_t L_ok_native = size_t(1) << 31;
     check(crt_coefficient_bound_satisfied(L_ok_native, L_ok_native, &why),
-          "L=2^31 square multiply satisfies CRT bound (64native)");
+          "L=2^31 square multiply satisfies CRT bound (64-bit pipeline)");
     const size_t L_bad = size_t(1) << 50;
 #elif LIMB_BITS == 64
     const size_t L_crt_only = size_t(1) << 32;

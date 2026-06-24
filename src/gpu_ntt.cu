@@ -26,7 +26,7 @@ using namespace gpuntt;
 #endif
 
 #if LIMB_BITS == 64 && defined(NATIVE_HOST_LIMBS)
-    // 64native: 3×59-bit RNS
+    // 64-bit pipeline: 3×59-bit RNS, u160 carry
     vector<TestDataTypeUint> moduli = {
         0x400002600000001ULL,
         0x400004200000001ULL,
@@ -38,7 +38,7 @@ using namespace gpuntt;
         144261359744151243ULL,
     };
 #elif LIMB_BITS == 64
-    // 59-bit NTT-friendly primes: p = k * 2^33 + 1
+    // hybrid pipeline: 2×59-bit RNS, u128 carry
     vector<TestDataTypeUint> moduli = {0x400002600000001ULL, 0x400004200000001ULL};
     vector<TestDataTypeUint> roots_of_unity_max = {273765203699653965ULL, 26231613454922890ULL};
 #else

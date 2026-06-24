@@ -4,7 +4,7 @@ import struct
 
 # Example usage:
 # python rng.py --limbs 64 --output input.bin
-# python rng.py --limbs 64 --limb-bits 64 --output input_native.bin
+# python rng.py --limbs 64 --limb-bits 64 --output input_64bit.bin
 # Generates two random numbers and writes them to input.bin in binary format.
 
 

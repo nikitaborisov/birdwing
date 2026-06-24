@@ -3,12 +3,12 @@
 // Benchmark the full GPU multiply pipeline with setup/teardown and per-stage
 // CUDA event timings from execute_ntt_multiply().
 //
-// Build:  make bench_full_32 | bench_full_64 | bench_full_64native | bench_full
+// Build:  make bench_full_32 | bench_full_hybrid | bench_full_64bit | bench_full
 // Run:    ./build/bench_full_multiply_32 [--warmup N] [--iters N] [--csv FILE] [L ...]
-//         ./build/bench_full_multiply_64 ...
-//         ./build/bench_full_multiply_64native ...
+//         ./build/bench_full_multiply_hybrid ...
+//         ./build/bench_full_multiply_64bit ...
 //
-// Or use the runner:  python scripts/run_gpu_bench.py --limb-bits 64native 16-24
+// Or use the runner:  python scripts/run_gpu_bench.py --limb-bits 64bit 16-24
 //
 // L spec: values < 64 mean 1<<L limbs; values >= 64 are literal limb counts.
 //         ranges are inclusive, e.g. 16-24 -> 16,17,...,24.
@@ -33,6 +33,17 @@
 #include <vector>
 
 using namespace std;
+
+static const char* pipeline_name()
+{
+#if defined(NATIVE_HOST_LIMBS)
+    return "64bit";
+#elif LIMB_BITS == 64
+    return "hybrid";
+#else
+    return "32";
+#endif
+}
 
 static bool file_nonempty(const string& path)
 {
@@ -383,7 +394,7 @@ static void write_csv(const string& path, const vector<BenchRow>& rows, bool app
     }
 
     if (write_header) {
-        csv << "limb_bits,L_arg,L,N,logN,warmup,iters,"
+        csv << "pipeline,host_limb_bits,operand_bits,L_arg,L,N,logN,warmup,iters,"
             << "mean_ms,stddev_ms,min_ms,max_ms,"
             << "setup_pinned_ms,setup_precompute_ms,setup_upload_ms,setup_alloc_ms,"
             << "pre_factors_ms,pre_params_ms,pre_twiddle_host_ms,pre_garner_host_ms,"
@@ -395,7 +406,9 @@ static void write_csv(const string& path, const vector<BenchRow>& rows, bool app
     csv << fixed << setprecision(6);
 
     for (const BenchRow& row : rows) {
-        csv << LIMB_BITS << ","
+        csv << pipeline_name() << ","
+            << INPUT_LIMB_BITS << ","
+            << (row.L * INPUT_LIMB_BITS) << ","
             << row.L_arg << ","
             << row.L << ","
             << row.N << ","
@@ -541,7 +554,8 @@ int main(int argc, char* argv[])
     }
 
     cout << "GPU full multiply benchmark"
-         << " (LIMB_BITS=" << LIMB_BITS
+         << " (pipeline=" << pipeline_name()
+         << ", host_limb_bits=" << INPUT_LIMB_BITS
          << ", warmup=" << warmup
          << ", iters=" << iters
          << ", max L_arg=" << (max_supported_logN() - 1)

@@ -10,17 +10,17 @@ The repo ships **three compile-time multiply pipelines** (separate binaries). Ho
 
 Three mutually exclusive builds are selected at compile time via `LIMB_BITS` and optional `NATIVE_HOST_LIMBS` (see `include/config.h`).
 
-| Pipeline | Build flags | Host in | Host out | NTT | `NUM_MODULI` | CRT width | Max square `L` | Binary |
+| Pipeline | Build flags | Host in | Host out | NTT | RNS | CRT / carry | Max square `L` | Binary |
 |---|---|---|---|---|---|---|---|---|
-| **32-bit** | `-DLIMB_BITS=32` | `uint32_t` | `uint32_t` | `Data32` | 3 | ~93-bit (128-bit storage) | 2²² | `bench_full_multiply_32` |
-| **64-bit / 2-mod** | `-DLIMB_BITS=64` | `uint32_t` (widened) | `uint32_t` | `Data64` | 2 | ~118-bit (128-bit storage) | 2³² | `bench_full_multiply_64` |
-| **64-bit native** | `-DLIMB_BITS=64 -DNATIVE_HOST_LIMBS` | `uint64_t` | `uint64_t` | `Data64` | 3 | **160-bit** (`U160`: 64+64+32) | 2³¹ | `bench_full_multiply_64native` |
+| **32-bit** | `-DLIMB_BITS=32` | `uint32_t` | `uint32_t` | `Data32` | 3×30-bit | u128 carry | 2²² | `bench_full_multiply_32` |
+| **hybrid** | `-DLIMB_BITS=64` | `uint32_t` (widened) | `uint32_t` | `Data64` | 2×60-bit | u128 carry | 2³² | `bench_full_multiply_hybrid` |
+| **64-bit** | `-DLIMB_BITS=64 -DNATIVE_HOST_LIMBS` | `uint64_t` | `uint64_t` | `Data64` | 3×60-bit | **u160 carry** | 2³¹ | `bench_full_multiply_64bit` |
 
 **When to use which:**
 
-- **32-bit:** default; smaller operands; three ~29-bit primes; most mature path.
-- **64/2-mod:** operands counted in **32-bit host limbs** but NTT at 64-bit with 2×59-bit primes; output remains 32-bit limbs.
-- **64-native:** operands already in **64-bit limbs** (full `uint64_t` range); 3×59-bit RNS; U160 CRT → 64-bit output limbs.
+- **32-bit:** 32-bit limbs end-to-end; three ~30-bit primes; default build.
+- **hybrid:** **32-bit host limbs**, **64-bit NTT** with 2×60-bit RNS; u128 CRT → 32-bit output limbs.
+- **64-bit:** **64-bit host limbs** (full `uint64_t` range); 3×60-bit RNS; u160 CRT → 64-bit output limbs.
 
 **Coefficient bound:** `max coeff = min(L_A, L_B) × (2^INPUT_LIMB_BITS − 1)²`. At native max square `L = 2³¹`, this is ≈ 2¹⁵⁹ — stored as **U160** (`lo`, `mid`, `hi32`).
 
@@ -28,16 +28,16 @@ Three mutually exclusive builds are selected at compile time via `LIMB_BITS` and
 
 | Hex | v₂(p−1) | Used in |
 |---|---|---|
-| `0x400002600000001` | 33 | 64/2-mod p₀, 64native p₀ |
-| `0x400004200000001` | 33 | 64/2-mod p₁, 64native p₁ |
-| `0x400001100000001` | 32 | **64native p₂ only** (caps `max_logN` at 32) |
+| `0x400002600000001` | 33 | hybrid p₀, 64-bit p₀ |
+| `0x400004200000001` | 33 | hybrid p₁, 64-bit p₁ |
+| `0x400001100000001` | 32 | **64-bit p₂ only** (caps `max_logN` at 32) |
 
 **API entry points:**
 
 | Pipeline | Host multiply API |
 |---|---|
-| 32-bit, 64/2-mod | `host_multiply_merge(vector<uint32_t> …)` |
-| 64-native | `host_multiply_merge_native(vector<uint64_t> …)` |
+| 32-bit, hybrid | `host_multiply_merge(vector<uint32_t> …)` |
+| 64-bit | `host_multiply_merge_native(vector<uint64_t> …)` |
 
 Orchestration: `execute_ntt_multiply()` in `src/gpu_ntt.cu`.
 
@@ -53,8 +53,8 @@ Large integers `A` and `B` (as limb arrays) are multiplied by treating them as p
         ▼
   ┌─────────────┐
   │  zero_pad   │  32-bit: zero-extend to TestDataTypeUint, pad to N
-  │             │  64/2-mod: same (uint32 → uint64 widen)
-  │             │  64-native: reduce each limb mod p_i per stream, pad
+  │             │  hybrid: same (uint32 → uint64 widen)
+  │             │  64-bit: reduce each limb mod p_i per stream, pad
   └──────┬──────┘
          │  (per modulus, on separate CUDA streams)
          ▼
@@ -86,7 +86,7 @@ Large integers `A` and `B` (as limb arrays) are multiplied by treating them as p
   Host output (OutputLimbType — uint32_t or uint64_t per pipeline)
 ```
 
-The orchestration lives in `execute_ntt_multiply()` (`src/gpu_ntt.cu`). Host entry points: `host_multiply_merge()` (32-bit and 64/2-mod) and `host_multiply_merge_native()` (64-native) in `src/host_multiply.cpp`.
+The orchestration lives in `execute_ntt_multiply()` (`src/gpu_ntt.cu`). Host entry points: `host_multiply_merge()` (32-bit and hybrid) and `host_multiply_merge_native()` (64-bit) in `src/host_multiply.cpp`.
 
 ---
 
@@ -112,7 +112,7 @@ ntt_cgbn/
 |------|------|
 | `config.h` | Compile-time knobs: `LIMB_BITS` (32 or 64), `NUM_MODULI`, `CARRY_SEG`, type aliases |
 | `gpu_ntt.h` | Main GPU multiply API: `NTTPrecomputed`, `NTTContext`, `precompute_ntt`, `execute_ntt_multiply` |
-| `multiply.h` | Host multiply: `host_multiply_merge` (32/64-2mod), `host_multiply_merge_native` (64-native) |
+| `multiply.h` | Host multiply: `host_multiply_merge` (32-bit/hybrid), `host_multiply_merge_native` (64-bit) |
 | `zero_pad.h` | GPU zero-padding / mod-reduce ingress wrapper |
 | `carry_prop.h` | Three carry-propagation `__global__` kernels |
 | `crt.h` | Host-side CRT (2-prime and general Garner) |
@@ -139,7 +139,7 @@ Headers pull in types from the external **GPU-NTT** library (`ntt.cuh`, `modular
 | Test | What it checks |
 |------|----------------|
 | `test_zero_pad.cu` | Zero-padding / native mod-reduce ingress |
-| `test_crt_gpu.cu` | GPU CRT vs host reference (32, 64, 64native/U160) |
+| `test_crt_gpu.cu` | GPU CRT vs host reference (32-bit, hybrid, 64-bit/U160) |
 | `test_carry_prop.cu` | Carry propagation (128-bit→32-out and U160→64-out) |
 | `test_pointwise_mul.cu` | Pointwise multiply kernel |
 | `test_crt.cpp` | Host CRT |
@@ -149,8 +149,8 @@ Headers pull in types from the external **GPU-NTT** library (`ntt.cuh`, `modular
 Run all tests: `make test`  
 Run one: `make test TEST=test_crt`  
 Component targets: `make test_zero_pad`, `make test_crt_gpu`, `make test_carry_prop`  
-Dual-width E2E: `make main_32`, `make main_64`, `make main_64native`  
-Native unit tests: `make test_unit_64native`, `make test_pipeline_crt_64native`
+Dual-width E2E: `make main_32`, `make main_hybrid`, `make main_64bit`
+64-bit unit tests: `make test_unit_64bit`, `make test_pipeline_crt_64bit`
 
 ### `bench/`
 
@@ -164,12 +164,12 @@ Build targets (`make/bench.mk`):
 | Target | Binary | Notes |
 |--------|--------|-------|
 | `make bench` | `build/bench_ntt` | NTT round-trip only |
-| `make bench_full_32` | `build/bench_full_multiply_32` | Full pipeline, `LIMB_BITS=32`, 3-prime RNS |
-| `make bench_full_64` | `build/bench_full_multiply_64` | Full pipeline, `LIMB_BITS=64`, 2-prime RNS |
-| `make bench_full_64native` | `build/bench_full_multiply_64native` | Full pipeline, native `uint64_t` I/O, 3×59-bit RNS |
+| `make bench_full_32` | `build/bench_full_multiply_32` | Full pipeline, 32-bit limbs + 32-bit NTT |
+| `make bench_full_hybrid` | `build/bench_full_multiply_hybrid` | Full pipeline, 32-bit limbs + 64-bit NTT (2×60-bit RNS) |
+| `make bench_full_64bit` | `build/bench_full_multiply_64bit` | Full pipeline, 64-bit limbs + 64-bit NTT (3×60-bit RNS) |
 | `make bench_full` | all three above | |
 
-The full-multiply benchmark accepts `--warmup N`, `--iters N`, `--csv FILE`, `--append`, and limb specs (`L` values `< 64` mean `1<<L` limbs; ranges like `16-24` are inclusive). Output CSV columns: `limb_bits,L_arg,L,N,logN,warmup,iters,mean_ms,stddev_ms,min_ms,max_ms`.
+The full-multiply benchmark accepts `--warmup N`, `--iters N`, `--csv FILE`, `--append`, and limb specs (`L` values `< 64` mean `1<<L` limbs; ranges like `16-24` are inclusive). Output CSV columns start with `pipeline,host_limb_bits` (`32` / `hybrid` / `64bit`, then 32 or 64), followed by `L_arg,L,N,logN,warmup,iters,mean_ms,stddev_ms,min_ms,max_ms`, …
 
 ### `make/` — build system
 
@@ -191,8 +191,8 @@ The full-multiply benchmark accepts `--warmup N`, `--iters N`, `--csv FILE`, `--
 | `carry.py` | Carry propagation reference |
 | `full_mul.py`, `gpu_ntt_verify.py` | End-to-end verification against Python reference |
 | `rng.py` | Generate random limb pairs → binary input (`--limb-bits 32\|64`) |
-| `run_gpu_bench.py` | Build and run `bench_full_multiply_{32,64,64native}`; `--limb-bits 32\|64\|64native\|both\|all` |
-| `plot_bench.py` | Plot `gpu_multiply_bench.csv` (log-log, error bars) → PNG |
+| `run_gpu_bench.py` | Build and run `bench_full_multiply_{32,hybrid,64bit}`; `--limb-bits 32\|hybrid\|64bit\|both\|all` |
+| `plot_bench.py` | Plot `gpu_multiply_bench.csv` (x-axis: operand bits by default) → PNG |
 
 ---
 
@@ -219,20 +219,20 @@ Set at compile time via `-DLIMB_BITS=32|64` and optional `-DNATIVE_HOST_LIMBS` (
 | Pipeline | Flags | NTT type | Host in | Host out | `NUM_MODULI` | RNS primes (`gpu_ntt.cu`) |
 |---|---|---|---|---|---|---|
 | 32-bit | `-DLIMB_BITS=32` | `Data32` | `uint32_t` | `uint32_t` | 3 | `0x2d000001`, `0x23800001`, `0x26800001` |
-| 64/2-mod | `-DLIMB_BITS=64` | `Data64` | `uint32_t` (widened) | `uint32_t` | 2 | `0x400002600000001`, `0x400004200000001` |
-| 64-native | `-DLIMB_BITS=64 -DNATIVE_HOST_LIMBS` | `Data64` | `uint64_t` | `uint64_t` | 3 | above + `0x400001100000001` |
+| hybrid | `-DLIMB_BITS=64` | `Data64` | `uint32_t` (widened) | `uint32_t` | 2 | `0x400002600000001`, `0x400004200000001` |
+| 64-bit | `-DLIMB_BITS=64 -DNATIVE_HOST_LIMBS` | `Data64` | `uint64_t` | `uint64_t` | 3 | above + `0x400001100000001` |
 
 ### Input vs output limb width (per pipeline)
 
 | Pipeline | Host input | After ingress | After carry |
 |---|---|---|---|
 | 32-bit | `uint32_t` | `uint32_t` in NTT field | `uint32_t` |
-| 64/2-mod | `uint32_t` | `uint64_t` (zero-extended) | `uint32_t` |
-| 64-native | `uint64_t` | `uint64_t` reduced mod each `p_i` | `uint64_t` |
+| hybrid | `uint32_t` | `uint64_t` (zero-extended) | `uint32_t` |
+| 64-bit | `uint64_t` | `uint64_t` reduced mod each `p_i` | `uint64_t` |
 
-The **64/2-mod** build uses a **2-prime RNS** with **32-bit input limbs widened to 64 bits** before NTT. Verified by `tests/test_zero_pad.cu` (`test_no_upper_bits_set`).
+The **hybrid** build uses a **2-prime RNS** with **32-bit input limbs widened to 64 bits** before NTT. Verified by `tests/test_zero_pad.cu` (`test_no_upper_bits_set`).
 
-**64-native** reduces each host limb modulo the stream's NTT prime before padding (limbs may exceed 59-bit primes). `NTTContext` stores raw inputs as `InputLimbType*` (`uint32_t*` or `uint64_t*`).
+**64-bit** reduces each host limb modulo the stream's NTT prime before padding (limbs may exceed 60-bit primes). `NTTContext` stores raw inputs as `InputLimbType*` (`uint32_t*` or `uint64_t*`).
 
 Other defines:
 
@@ -268,7 +268,7 @@ make test             # all tests
 make bench            # NTT round-trip benchmark (build/bench_ntt)
 make bench_full       # end-to-end multiply benchmarks (32- and 64-bit)
 make bench_full_32    # build/bench_full_multiply_32 only
-make bench_full_64    # build/bench_full_multiply_64 only
+make bench_full_hybrid    # build/bench_full_multiply_hybrid only
 make DEBUG=1 test     # tests with debug checks
 make TIMING=1         # timing instrumentation in gpu_ntt.cu
 ```
@@ -277,7 +277,7 @@ make TIMING=1         # timing instrumentation in gpu_ntt.cu
 
 ```bash
 make bench_full_64
-./build/bench_full_multiply_64 --warmup 2 --iters 20 --csv gpu_multiply_bench.csv 16-22
+./build/bench_full_multiply_hybrid --warmup 2 --iters 20 --csv gpu_multiply_bench.csv 16-22
 
 # or via runner (builds if needed; use --append for the second width)
 python scripts/run_gpu_bench.py --limb-bits both 16-22 --iters 20
@@ -338,7 +338,7 @@ Based on recent commit history and in-code TODOs:
 
 ### Dual-width unified executable — investigation
 
-Today the 32-bit, 64/2-mod, and 64-native multiply pipelines are **mutually exclusive at link time**. Each is a full recompile with `-DLIMB_BITS=32`, `-DLIMB_BITS=64`, or `-DLIMB_BITS=64 -DNATIVE_HOST_LIMBS`, producing separate binaries (`build/bench_full_multiply_{32,64,64native}`, `build/test_full_multiply_{32,64,64native}`). The default `make` target and shared `build/*.o` cache always use `LIMB_BITS=32` (from `config.h`).
+Today the 32-bit, hybrid, and 64-bit multiply pipelines are **mutually exclusive at link time**. Each is a full recompile with `-DLIMB_BITS=32`, `-DLIMB_BITS=64`, or `-DLIMB_BITS=64 -DNATIVE_HOST_LIMBS`, producing separate binaries (`build/bench_full_multiply_{32,hybrid,64bit}`, `build/test_full_multiply_{32,hybrid,64bit}`). The default `make` target and shared `build/*.o` cache always use `LIMB_BITS=32` (from `config.h`).
 
 **Goal:** one executable that can run either pipeline at runtime (e.g. `--limb-bits 32|64` or automatic selection by operand size).
 
@@ -388,7 +388,7 @@ __constant__ uint64_t d_M_mod_table[NUM_MODULI][NUM_MODULI];
 __constant__ TestDataTypeUint* d_residue_ptrs[NUM_MODULI];
 ```
 
-The 32-bit build allocates 3-modulus tables (9-element `M_mod_table`); the 64-bit build allocates 2-modulus tables (4 elements). `crt_combine_kernel` uses `#pragma unroll` over `NUM_MODULI` and calls `mulmod64`, which contains a `#if LIMB_BITS == 64` device-code fork (Barrett vs exact division). Two width variants cannot share these `__constant__` symbol names in one module.
+The 32-bit build allocates 3-modulus tables (9-element `M_mod_table`); the hybrid build allocates 2-modulus tables (4 elements). `crt_combine_kernel` uses `#pragma unroll` over `NUM_MODULI` and calls `mulmod64`, which contains a `#if LIMB_BITS == 64` device-code fork (Barrett vs exact division). Two width variants cannot share these `__constant__` symbol names in one module.
 
 Upload functions (`upload_garner_params`, `upload_residue_ptrs`) also assume a single active constant-memory layout. Running both pipelines in one process would require **separate constant-memory namespaces** (separate `.cu` TUs or renamed symbols via macros) and a host-side dispatch layer that uploads the correct tables before each multiply.
 
@@ -453,7 +453,7 @@ The shared `build/*.o` cache cannot safely mix widths: an object built with `LIM
 1. **Productionize pointwise mul** — Barrett or library modular multiply for 32/64-bit limbs
 2. **Reconnect `main.cpp`** — enable `merge` path and optional file I/O for manual testing
 3. **Parameter tooling** — promote `scripts/find_prim_roots.py` output into generated headers for new prime sets
-4. **64-bit scaling** — use `bench_full_64` to profile larger `N` and limb counts; compare CRT/carry vs NTT (`TIMING=1`)
+4. **64-bit scaling** — use `bench_full_64bit` to profile larger `N` and limb counts; compare CRT/carry vs NTT (`TIMING=1`)
 5. **CI / reproducibility** — document exact GPU-NTT and GMP install steps; pin moduli in a single config source
 6. **Unified dual-width binary** — follow the approach in [Dual-width unified executable](#dual-width-unified-executable--investigation) above
 

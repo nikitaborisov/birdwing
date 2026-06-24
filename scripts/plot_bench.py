@@ -13,8 +13,42 @@ import matplotlib.pyplot as plt
 import numpy as np
 
 CORE_COLUMNS = {
-    "limb_bits", "L_arg", "L", "N", "mean_ms", "stddev_ms", "min_ms", "max_ms",
+    "L_arg", "L", "N", "mean_ms", "stddev_ms", "min_ms", "max_ms",
 }
+
+PIPELINE_LABELS = {
+    "32": "32-bit",
+    "hybrid": "hybrid",
+    "64bit": "64-bit",
+}
+
+
+def resolve_host_limb_bits(row: dict) -> int:
+    if "host_limb_bits" in row:
+        return int(row["host_limb_bits"])
+    pipeline = row.get("pipeline")
+    if pipeline == "64bit":
+        return 64
+    if pipeline in ("32", "hybrid"):
+        return 32
+    # Legacy CSV: limb_bits was NTT width (64 for hybrid and 64-bit).
+    if row.get("limb_bits") == 32:
+        return 32
+    return 32
+
+
+def enrich_operand_bits(entry: dict) -> None:
+    host_bits = resolve_host_limb_bits(entry)
+    entry["host_limb_bits"] = host_bits
+    if "operand_bits" not in entry:
+        entry["operand_bits"] = int(entry["L"]) * host_bits
+
+
+def series_label(row: dict) -> str:
+    if "pipeline" in row and row["pipeline"]:
+        return PIPELINE_LABELS.get(row["pipeline"], row["pipeline"])
+    # Legacy CSV: limb_bits was NTT width (64 for both hybrid and 64-bit).
+    return f"{row['limb_bits']}-bit"
 
 EXECUTE_STACK_LAYERS: tuple[tuple[str, str], ...] = (
     ("ingress_fwd_mean_ms", "H2D + fwd pad+NTT"),
@@ -123,12 +157,13 @@ def load_csv(path: Path) -> tuple[list[dict], bool]:
         if reader.fieldnames is None or not CORE_COLUMNS.issubset(reader.fieldnames):
             missing = CORE_COLUMNS - set(reader.fieldnames or [])
             raise ValueError(f"CSV missing columns: {sorted(missing)}")
+        if "pipeline" not in reader.fieldnames and "limb_bits" not in reader.fieldnames:
+            raise ValueError("CSV missing pipeline or limb_bits column")
 
         has_breakdown = has_breakdown_columns(reader.fieldnames)
 
         for row in reader:
             entry: dict = {
-                "limb_bits": int(row["limb_bits"]),
                 "L_arg": int(row["L_arg"]),
                 "L": int(row["L"]),
                 "N": int(row["N"]),
@@ -138,6 +173,15 @@ def load_csv(path: Path) -> tuple[list[dict], bool]:
                 "min_ms": float(row["min_ms"]),
                 "max_ms": float(row["max_ms"]),
             }
+            if "operand_bits" in row and row["operand_bits"]:
+                entry["operand_bits"] = int(row["operand_bits"])
+            if "pipeline" in row and row["pipeline"]:
+                entry["pipeline"] = row["pipeline"]
+            if "host_limb_bits" in row and row["host_limb_bits"]:
+                entry["host_limb_bits"] = int(row["host_limb_bits"])
+            elif "limb_bits" in row and row["limb_bits"]:
+                entry["limb_bits"] = int(row["limb_bits"])
+            enrich_operand_bits(entry)
             if has_breakdown:
                 for key in OPTIONAL_BREAKDOWN_COLUMNS:
                     if key in row:
@@ -155,8 +199,7 @@ def load_csv(path: Path) -> tuple[list[dict], bool]:
 def group_rows(rows: list[dict], x_key: str) -> dict[str, list[dict]]:
     groups: dict[str, list[dict]] = defaultdict(list)
     for row in rows:
-        label = f"{row['limb_bits']}-bit"
-        groups[label].append(row)
+        groups[series_label(row)].append(row)
 
     for label in groups:
         groups[label].sort(key=lambda r: r[x_key])
@@ -194,6 +237,14 @@ def print_variability(series: list[dict], mode: str) -> None:
             "  note: stddev is <3% of mean everywhere — error bars are tiny on a "
             "log-y plot; try --error minmax or --error band"
         )
+
+
+X_AXIS_LABELS = {
+    "operand_bits": "Operand size (bits per input)",
+    "L": "Limb count",
+    "N": "NTT size",
+    "L_arg": "Limb count ($2^{L_{arg}}$)",
+}
 
 
 def is_pow2(v: float) -> bool:
@@ -282,11 +333,7 @@ def plot_total(
                 label=label,
             )
 
-    x_labels = {
-        "L": "Limb count",
-        "N": "NTT size",
-        "L_arg": "Limb count",
-    }
+    x_labels = X_AXIS_LABELS
     error_labels = {
         "stddev": "mean ± stddev",
         "minmax": "min – max",
@@ -444,11 +491,7 @@ def plot_stacked_breakdown(
             show_xlabels=True,
         )
 
-    x_labels = {
-        "L": "Limb count",
-        "N": "NTT size",
-        "L_arg": "Limb count",
-    }
+    x_labels = X_AXIS_LABELS
     if ax_pre is not None:
         ax_pre.set_xlabel(x_labels.get(x_key, x_key))
     else:
@@ -581,9 +624,9 @@ def main() -> None:
     )
     parser.add_argument(
         "--x",
-        choices=("L", "N", "L_arg"),
-        default="L",
-        help="X-axis column (default: L)",
+        choices=("operand_bits", "L", "N", "L_arg"),
+        default="operand_bits",
+        help="X-axis column (default: operand_bits = L × host limb width)",
     )
     parser.add_argument(
         "--error",

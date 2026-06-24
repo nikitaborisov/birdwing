@@ -148,6 +148,8 @@ make bench_full_32
 python scripts/plot_bench.py gpu_multiply_bench.csv
 ```
 
+Plots use **operand bits** (`L × host_limb_bits`) on the x-axis by default so 32-bit, hybrid, and 64-bit pipelines compare at equal input size. Use `--x L` for raw limb count.
+
 Per `L`: single-shot **precompute**, **upload**, **setup** alloc/pinned,
 averaged **multiply**, single-shot **teardown**.
 

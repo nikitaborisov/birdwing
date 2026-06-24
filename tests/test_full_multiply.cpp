@@ -486,7 +486,7 @@ bool compare_u64(const vector<uint64_t>& A, const vector<uint64_t>& B) {
 }
 
 void test_native_pipeline(size_t L) {
-    cout << YELLOW << "\n[Test] 64native multiply L=" << L << RESET << "\n";
+    cout << YELLOW << "\n[Test] 64-bit multiply L=" << L << RESET << "\n";
     auto A = random_limbs_u64(L, 1234);
     auto B = random_limbs_u64(L, 5678);
     vector<uint64_t> C_gpu, C_gmp;
@@ -504,7 +504,7 @@ void test_native_pipeline(size_t L) {
 }
 
 int main() {
-    cout << YELLOW << "==== 64NATIVE FULL MULTIPLY TEST ====\n" << RESET;
+    cout << YELLOW << "==== 64-BIT FULL MULTIPLY TEST ====\n" << RESET;
     test_native_pipeline(4);
     test_native_pipeline(16);
     test_native_pipeline(64);

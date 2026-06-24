@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Build and run the GPU full-multiply benchmark (32-, 64-, and/or 64native)."""
+"""Build and run the GPU full-multiply benchmark (32-bit, hybrid, and/or 64-bit)."""
 
 import argparse
 import subprocess
@@ -9,6 +9,23 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parent.parent
 BUILD_DIR = ROOT / "build"
 
+# Canonical pipeline names → (make target, binary basename)
+PIPELINES = {
+    "32": ("bench_full_32", "bench_full_multiply_32"),
+    "hybrid": ("bench_full_hybrid", "bench_full_multiply_hybrid"),
+    "64bit": ("bench_full_64bit", "bench_full_multiply_64bit"),
+}
+
+# Deprecated CLI names (old terminology)
+ALIASES = {
+    "64": "hybrid",
+    "64native": "64bit",
+}
+
+
+def normalize(bits: str) -> str:
+    return ALIASES.get(bits, bits)
+
 
 def run(cmd: list[str], *, cwd: Path = ROOT) -> None:
     print("+", " ".join(str(c) for c in cmd))
@@ -16,12 +33,10 @@ def run(cmd: list[str], *, cwd: Path = ROOT) -> None:
 
 
 def build(bits: str) -> Path:
-    if bits == "64native":
-        target = "bench_full_64native"
-        binary_name = "bench_full_multiply_64native"
-    else:
-        target = f"bench_full_{bits}"
-        binary_name = f"bench_full_multiply_{bits}"
+    bits = normalize(bits)
+    if bits not in PIPELINES:
+        raise ValueError(f"unknown pipeline: {bits}")
+    target, binary_name = PIPELINES[bits]
     run(["make", target])
     binary = BUILD_DIR / binary_name
     if not binary.exists():
@@ -31,13 +46,19 @@ def build(bits: str) -> Path:
 
 def main() -> None:
     parser = argparse.ArgumentParser(
-        description="Run GPU full-multiply benchmark for 32-bit, 64-bit, and/or 64native builds.",
+        description=(
+            "Run GPU full-multiply benchmark for 32-bit, hybrid, and/or 64-bit builds."
+        ),
     )
     parser.add_argument(
         "--limb-bits",
-        choices=("32", "64", "64native", "both", "all"),
+        choices=("32", "hybrid", "64bit", "64", "64native", "both", "all"),
         default="32",
-        help="Which E2E build to run (default: 32). 'both'=32+64, 'all'=32+64+64native",
+        help=(
+            "Which pipeline to run (default: 32). "
+            "'both'=32+hybrid, 'all'=32+hybrid+64bit. "
+            "'64' and '64native' are deprecated aliases for hybrid and 64bit."
+        ),
     )
     parser.add_argument(
         "--no-build",
@@ -60,25 +81,22 @@ def main() -> None:
         args.bench_args = args.bench_args[1:]
 
     if args.limb_bits == "both":
-        bits_list = ["32", "64"]
+        bits_list = ["32", "hybrid"]
     elif args.limb_bits == "all":
-        bits_list = ["32", "64", "64native"]
+        bits_list = ["32", "hybrid", "64bit"]
     else:
-        bits_list = [args.limb_bits]
+        bits_list = [normalize(args.limb_bits)]
 
     csv_path = Path(args.csv)
     if not csv_path.is_absolute():
         csv_path = ROOT / csv_path
 
     for i, bits in enumerate(bits_list):
+        canonical = normalize(bits)
         if not args.no_build:
-            binary = build(bits)
+            binary = build(canonical)
         else:
-            binary_name = (
-                "bench_full_multiply_64native"
-                if bits == "64native"
-                else f"bench_full_multiply_{bits}"
-            )
+            _, binary_name = PIPELINES[canonical]
             binary = BUILD_DIR / binary_name
             if not binary.exists():
                 parser.error(f"binary not found: {binary} (run without --no-build)")
@@ -88,7 +106,7 @@ def main() -> None:
             cmd.append("--append")
         cmd.extend(args.bench_args)
 
-        print(f"\n=== {bits} benchmark ===")
+        print(f"\n=== {canonical} benchmark ===")
         run(cmd)
 
     print(f"\nResults in {csv_path}")

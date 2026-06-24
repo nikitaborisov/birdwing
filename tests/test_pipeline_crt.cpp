@@ -1,4 +1,4 @@
-// Compare GPU CRT output (64-bit pipeline) against CPU convolution mod 2^128.
+// Compare GPU CRT output (hybrid pipeline) against CPU convolution mod 2^128.
 //
 // Coefficients can exceed 64 bits (e.g. L=2^15 with ~30-bit limbs peaks near 2^75),
 // so the CPU reference uses unsigned __int128 — uint64_t / long long is not enough.
@@ -259,11 +259,11 @@ static void run_case(size_t L, uint64_t seed) {
 }
 
 int main() {
-    printf("=== pipeline CRT vs CPU convolution mod 2^128 (LIMB_BITS=%d) ===\n", LIMB_BITS);
+    printf("=== pipeline CRT vs CPU convolution mod 2^128 (hybrid, LIMB_BITS=%d) ===\n", LIMB_BITS);
     static_assert(sizeof(u128) == 16, "need 128-bit integer type for CPU reference");
 
 #if LIMB_BITS != 64
-    printf("SKIP: this test targets the 64-bit pipeline\n");
+    printf("SKIP: this test targets the hybrid pipeline\n");
     return 0;
 #else
     run_case(4, 100);
@@ -496,7 +496,7 @@ static void run_case_native(size_t L, uint64_t seed, bool narrow) {
 }
 
 int main() {
-    printf("=== pipeline CRT vs CPU convolution (64native, U160) ===\n");
+    printf("=== pipeline CRT vs CPU convolution (64-bit pipeline, U160) ===\n");
 
     run_case_native(4, 100, false);
     run_case_native(8, 200, false);

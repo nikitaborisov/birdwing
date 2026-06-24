@@ -15,9 +15,9 @@
 #endif
 
 // Multiply pipelines (separate compile-time binaries):
-//   -DLIMB_BITS=32                          → 32-bit: uint32 in/out, Data32, 3 small primes
-//   -DLIMB_BITS=64                          → 64/2-mod: uint32 in/out (widened), Data64, 2×59-bit
-//   -DLIMB_BITS=64 -DNATIVE_HOST_LIMBS      → 64-native: uint64 in/out, Data64, 3×59-bit, U160 CRT
+//   -DLIMB_BITS=32                          → 32-bit: 32-bit limbs, 32-bit NTT (3×30-bit RNS)
+//   -DLIMB_BITS=64                          → hybrid: 32-bit limbs, 64-bit NTT (2×60-bit RNS, u128 carry)
+//   -DLIMB_BITS=64 -DNATIVE_HOST_LIMBS      → 64-bit: 64-bit limbs, 64-bit NTT (3×60-bit RNS, u160 carry)
 #if LIMB_BITS == 64 && defined(NATIVE_HOST_LIMBS)
 	#define NUM_MODULI 3
 	#define INPUT_LIMB_BITS 64
