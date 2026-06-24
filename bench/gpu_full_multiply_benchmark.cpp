@@ -283,7 +283,7 @@ static BenchRow benchmark_L(size_t L_arg, int warmup, int iters, uint64_t seed)
         ctx = allocate_ntt_context(pre, L_A, L_B);
     });
 
-    vector<TestDataTypeUint> C_out(N + 1, 0);
+    vector<OutputLimbType> C_out(N + 1, 0);
 
     for (int i = 0; i < warmup; i++)
         execute_ntt_multiply(ctx, a_pinned, b_pinned, C_out, M, M_half);

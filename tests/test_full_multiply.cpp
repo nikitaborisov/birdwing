@@ -22,7 +22,7 @@ using namespace std;
 
 // ---------------- CPU REFERENCE MULTIPLY ----------------
 // Bigint schoolbook multiply with full carry
-vector<TestDataTypeUint> cpu_schoolbook_mul(
+vector<OutputLimbType> cpu_schoolbook_mul(
     const vector<uint32_t>& A,
     const vector<uint32_t>& B)
 {
@@ -35,13 +35,13 @@ vector<TestDataTypeUint> cpu_schoolbook_mul(
         }
     }
 
-    vector<TestDataTypeUint> C(tmp.size());
+    vector<OutputLimbType> C(tmp.size());
     unsigned __int128 carry = 0;
-    const unsigned SHIFT = 8 * sizeof(TestDataTypeUint);
+    const unsigned SHIFT = OUTPUT_LIMB_BITS;
 
     for (size_t i = 0; i < tmp.size(); i++) {
         tmp[i] += carry;
-        C[i] = (TestDataTypeUint)(tmp[i] & (((unsigned __int128)1 << SHIFT) - 1));
+        C[i] = (OutputLimbType)(tmp[i] & (((unsigned __int128)1 << SHIFT) - 1));
         carry = tmp[i] >> SHIFT;
     }
 
@@ -71,8 +71,8 @@ vector<uint32_t> random_limbs(size_t n, uint64_t seed)
 }
 
 // ---------------- COMPARE & REPORT ----------------
-bool compare_vectors(const vector<TestDataTypeUint>& A,
-                     const vector<TestDataTypeUint>& B)
+bool compare_vectors(const vector<OutputLimbType>& A,
+                     const vector<OutputLimbType>& B)
 {
     const size_t MAX_REPORT = 4;
 
@@ -112,10 +112,10 @@ bool compare_vectors(const vector<TestDataTypeUint>& A,
 }
 
 // ---------------- GMP HELPERS ----------------
-void to_mpz(mpz_t out, const vector<TestDataTypeUint>& v)
+void to_mpz(mpz_t out, const vector<OutputLimbType>& v)
 {
     mpz_set_ui(out, 0);
-    const size_t limb_bits = 8 * sizeof(TestDataTypeUint);
+    const size_t limb_bits = OUTPUT_LIMB_BITS;
 
     for (ssize_t i = (ssize_t)v.size() - 1; i >= 0; i--) {
         mpz_mul_2exp(out, out, limb_bits);
@@ -123,17 +123,17 @@ void to_mpz(mpz_t out, const vector<TestDataTypeUint>& v)
     }
 }
 
-vector<TestDataTypeUint> from_mpz(const mpz_t x, size_t expected_limbs)
+vector<OutputLimbType> from_mpz(const mpz_t x, size_t expected_limbs)
 {
-    vector<TestDataTypeUint> out(expected_limbs, 0);
+    vector<OutputLimbType> out(expected_limbs, 0);
 
     mpz_t tmp;
     mpz_init_set(tmp, x);
 
-    const unsigned limb_bits = 8 * sizeof(TestDataTypeUint);
+    const unsigned limb_bits = OUTPUT_LIMB_BITS;
 
     for (size_t i = 0; i < expected_limbs; i++) {
-        out[i] = (TestDataTypeUint) mpz_get_ui(tmp);
+        out[i] = (OutputLimbType) mpz_get_ui(tmp);
         mpz_fdiv_q_2exp(tmp, tmp, limb_bits);
     }
 
@@ -145,31 +145,30 @@ void limbs_to_mpz(mpz_t result,
                   const uint32_t* limbs,
                   size_t n)
 {
-    mpz_import(result, n, -1, sizeof(TestDataTypeUint), 0, 0, limbs);
+    mpz_import(result, n, -1, sizeof(OutputLimbType), 0, 0, limbs);
 }
 
-vector<TestDataTypeUint> fast_from_mpz(mpz_t value, size_t expected_limbs)
+vector<OutputLimbType> fast_from_mpz(mpz_t value, size_t expected_limbs)
 {
-    vector<TestDataTypeUint> out(expected_limbs);
+    vector<OutputLimbType> out(expected_limbs);
 
     size_t count = 0;
     mpz_export(
-        out.data(),     // destination buffer
-        &count,         // actual number of limbs written
-        -1,             // least significant limb first
-        sizeof(TestDataTypeUint), // size of each limb
-        0,              // native endianness
-        0,              // no nail bits
+        out.data(),
+        &count,
+        -1,
+        sizeof(OutputLimbType),
+        0,
+        0,
         value
     );
 
-    // Zero-pad unused limbs if needed
     out.resize(expected_limbs, 0);
 
     return out;
 }
 
-vector<TestDataTypeUint> gmp_mul(
+vector<OutputLimbType> gmp_mul(
     const vector<uint32_t>& A,
     const vector<uint32_t>& B)
 {
@@ -184,22 +183,12 @@ vector<TestDataTypeUint> gmp_mul(
 
     // ---- Import A ----
     auto t1 = clock::now();
-    #if LIMB_BITS == 64
-    vector<uint64_t> A64(A.begin(), A.end());
-    mpz_import(a, A64.size(), -1, sizeof(uint64_t), 0, 0, A64.data());
-    #else
     mpz_import(a, A.size(), -1, sizeof(uint32_t), 0, 0, A.data());
-    #endif
     auto t2 = clock::now();
 
     // ---- Import B ----
     auto t3 = clock::now();
-    #if LIMB_BITS == 64
-    vector<uint64_t> B64(B.begin(), B.end());
-    mpz_import(b, B64.size(), -1, sizeof(uint64_t), 0, 0, B64.data());
-    #else
     mpz_import(b, B.size(), -1, sizeof(uint32_t), 0, 0, B.data());
-    #endif
     auto t4 = clock::now();
 
     // ---- Multiply ----
@@ -254,19 +243,19 @@ void test_full_pipeline(size_t L)
     vector<uint32_t> A = random_limbs(L, 1234);
     vector<uint32_t> B = random_limbs(L, 5678);
 
-    // vector<TestDataTypeUint> A = {1,2,3,4,5,6,7,8};
-    // vector<TestDataTypeUint> B = {9,10,11,12,13,14,15,16};
+    // vector<OutputLimbType> A = {1,2,3,4,5,6,7,8};
+    // vector<OutputLimbType> B = {9,10,11,12,13,14,15,16};
 
     // vector<uint32_t> A = {1,2,3,4};
     // vector<uint32_t> B = {5,6,7,8};
 
     // GPU pipeline
-    vector<TestDataTypeUint> C_gpu;
+    vector<OutputLimbType> C_gpu;
     chrono::duration<double, milli> duration;
     host_multiply_merge(A, B, C_gpu, duration);
 
     // CPU reference
-    vector<TestDataTypeUint> C_cpu = cpu_schoolbook_mul(A, B);
+    vector<OutputLimbType> C_cpu = cpu_schoolbook_mul(A, B);
 
     // Compare
     bool ok = compare_vectors(C_gpu, C_cpu);
@@ -283,7 +272,7 @@ void test_simple() {
     auto check = [&](const vector<uint32_t>& A,
                      const vector<uint32_t>& B,
                      const string& label) {
-        vector<TestDataTypeUint> C_gpu, C_ref;
+        vector<OutputLimbType> C_gpu, C_ref;
         host_multiply_merge(A, B, C_gpu, dur);
         C_ref = cpu_schoolbook_mul(A, B);
         bool ok = compare_vectors(C_gpu, C_ref);
@@ -299,7 +288,7 @@ void test_identities(size_t L) {
     cout << YELLOW << "\n[Test] Identities, L = " << L << " limbs" << RESET << "\n";
     vector<uint32_t> Z(L, 0);
     vector<uint32_t> O(L, 1);
-    vector<TestDataTypeUint> R;
+    vector<OutputLimbType> R;
 
     chrono::duration<double, milli> duration;
     host_multiply_merge(Z, Z, R, duration);
@@ -329,7 +318,7 @@ void test_root_of_unity(size_t L)
     // neutral multiplier so A survives pipeline
     B[0] = 1;
 
-    vector<TestDataTypeUint> C;
+    vector<OutputLimbType> C;
     chrono::duration<double, milli> duration;
 
     cout << "[INFO] Expect forward NTT of A to resemble:\n"
@@ -343,7 +332,7 @@ void test_root_of_unity(size_t L)
 
     // convolution identity sanity:
     // multiplying by [1,0,0,...] should reproduce A
-    vector<TestDataTypeUint> expected(A.size() + B.size(), 0);
+    vector<OutputLimbType> expected(A.size() + B.size(), 0);
     expected[1] = 1;
 
     bool ok = compare_vectors(C, expected);
@@ -367,10 +356,10 @@ void benchmark_vs_gmp(size_t L)
     vector<uint32_t> A = random_limbs(L, 1234);
     vector<uint32_t> B = random_limbs(L, 5678);
 
-    vector<TestDataTypeUint> C_gpu, C_gmp;
+    vector<OutputLimbType> C_gpu, C_gmp;
 
     // Warm-up
-    vector<TestDataTypeUint> warm;
+    vector<OutputLimbType> warm;
     chrono::duration<double, milli> duration;
     host_multiply_merge(A, B, warm, duration);
     C_gmp = gmp_mul(A, B);
@@ -421,7 +410,7 @@ void profile_run(size_t L)
 {
     vector<uint32_t> A = random_limbs(L, 1234);
     vector<uint32_t> B = random_limbs(L, 5678);
-    vector<TestDataTypeUint> C;
+    vector<OutputLimbType> C;
 
     chrono::duration<double, milli> duration;
 

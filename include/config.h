@@ -30,6 +30,12 @@
 
 constexpr int BIT_WIDTH = sizeof(TestDataTypeUint) * 8;
 
+// Host multiply I/O: operands and product are always 32-bit limbs, regardless of
+// LIMB_BITS (which selects NTT/modulus domain width and NUM_MODULI).
+using OutputLimbType = uint32_t;
+#define OUTPUT_LIMB_BITS 32
+#define OUTPUT_LIMB_MASK 0xFFFFFFFFULL
+
 using namespace std;
 
 // Batch size for processing

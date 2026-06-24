@@ -8,8 +8,7 @@
 __global__ void carry_intra_segment_kernel(
     const uint64_t* __restrict__ C_hi,
     const uint64_t* __restrict__ C_lo,
-    // changed from uint32_t to TestDataTypeUint
-    TestDataTypeUint* __restrict__ out,
+    OutputLimbType* __restrict__ out,
     int64_t*          __restrict__ seg_carry,
     size_t N,
     unsigned __int128 M,
@@ -27,9 +26,9 @@ __global__ void carry_intra_segment_kernel(
         if (val > (__int128)M_half) val -= (__int128)M;
 
         __int128 temp = val + carry;
-        TestDataTypeUint limb = (TestDataTypeUint)(temp & LIMB_MASK);
+        OutputLimbType limb = (OutputLimbType)(temp & OUTPUT_LIMB_MASK);
         out[i] = limb;
-        carry  = temp >> LIMB_BITS;
+        carry  = temp >> OUTPUT_LIMB_BITS;
     }
     seg_carry[blockIdx.x] = (int64_t)carry;
 }
@@ -55,10 +54,11 @@ __global__ void carry_inter_segment_kernel(
 // Pass 3: each block adds the incoming carry into its segment's limbs,
 // propagating within the segment if an addition overflows a limb.
 __global__ void carry_fixup_kernel(
-    // changed from uint32_t to TestDataTypeUint
-    TestDataTypeUint* __restrict__ out,
-    const int64_t*    __restrict__ seg_carry,
-    size_t N)
+    OutputLimbType* __restrict__ out,
+    int64_t*          __restrict__ seg_carry,
+    size_t N,
+    size_t num_segs,
+    int*              __restrict__ escape_flag)
 {
     if (threadIdx.x != 0) return;
 
@@ -70,15 +70,14 @@ __global__ void carry_fixup_kernel(
     if (incoming == 0) return;
 
     for (size_t i = seg_start; i < seg_end && incoming != 0; i++) {
-        // changed from int64_t to int128
         __int128 sum  = (__int128)out[i] + incoming;
-        // changed from uint32_t to TestDataTypeUint
-        out[i]        = (TestDataTypeUint)(sum & LIMB_MASK);
-        // added cast to int64_t
-        incoming      = (int64_t)(sum >> LIMB_BITS);
+        out[i]        = (OutputLimbType)(sum & OUTPUT_LIMB_MASK);
+        incoming      = (int64_t)(sum >> OUTPUT_LIMB_BITS);
     }
 
-    // if carry escapes the segment it belongs to the next seg's fixup pass —
-    // but with 90-bit CRT outputs and LIMB_BITS-bit limbs this cannot happen in practice.
-    // assert(incoming == 0);
+    if (incoming != 0 && seg + 1 < num_segs) {
+        atomicAdd(reinterpret_cast<unsigned long long*>(&seg_carry[seg + 1]),
+                  static_cast<unsigned long long>(incoming));
+        *escape_flag = 1;
+    }
 }

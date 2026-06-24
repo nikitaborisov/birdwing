@@ -40,9 +40,9 @@ struct NTTContext {
     uint64_t* d_C_hi;
     uint64_t* d_C_lo;
 
-    // changed from uint32_t to TestDataTypeUint
-    TestDataTypeUint* d_out;
+    OutputLimbType* d_out;
     int64_t*    d_seg_carry;
+    int*        d_carry_escape;
 };
 
 // Host precompute for transform size N. GPU pointers are null until
@@ -109,9 +109,11 @@ void execute_ntt_multiply(
 	const uint32_t* a_pinned,
     // changed from TestDataTypeUint to uint32_t
 	const uint32_t* b_pinned,
-	vector<TestDataTypeUint> &C_out,
+	vector<OutputLimbType> &C_out,
 	__int128 M, __int128 M_half,
-	NTTTiming* timing_out = nullptr
+	NTTTiming* timing_out = nullptr,
+	vector<uint64_t>* crt_hi_out = nullptr,
+	vector<uint64_t>* crt_lo_out = nullptr
 );
 
 void cleanup_ntt_context(NTTContext &ctx);

@@ -19,16 +19,16 @@ void check(const char* name, bool ok) {
 // ----------------------------------------------------------------
 // CPU reference carry propagation
 // Given 128-bit values per coefficient, reduce mod M (centered),
-// then carry-propagate into LIMB_BITS-wide limbs.
+// then carry-propagate into OUTPUT_LIMB_BITS-wide limbs.
 // ----------------------------------------------------------------
-vector<TestDataTypeUint> cpu_carry_prop(
+vector<OutputLimbType> cpu_carry_prop(
     const vector<uint64_t>& C_hi,
     const vector<uint64_t>& C_lo,
     unsigned __int128 M,
     unsigned __int128 M_half,
     size_t N)
 {
-    vector<TestDataTypeUint> out(N, 0);
+    vector<OutputLimbType> out(N, 0);
     __int128 carry = 0;
 
     for (size_t i = 0; i < N; i++) {
@@ -36,8 +36,8 @@ vector<TestDataTypeUint> cpu_carry_prop(
         if (val > (__int128)M_half) val -= (__int128)M;
 
         __int128 temp = val + carry;
-        out[i] = (TestDataTypeUint)(temp & LIMB_MASK);
-        carry  = temp >> LIMB_BITS;
+        out[i] = (OutputLimbType)(temp & OUTPUT_LIMB_MASK);
+        carry  = temp >> OUTPUT_LIMB_BITS;
     }
     return out;
 }
@@ -45,7 +45,7 @@ vector<TestDataTypeUint> cpu_carry_prop(
 // ----------------------------------------------------------------
 // Run the three carry prop kernels and return result on host
 // ----------------------------------------------------------------
-vector<TestDataTypeUint> run_carry_prop(
+vector<OutputLimbType> run_carry_prop(
     const vector<uint64_t>& h_C_hi,
     const vector<uint64_t>& h_C_lo,
     unsigned __int128 M,
@@ -58,9 +58,9 @@ vector<TestDataTypeUint> run_carry_prop(
     cudaMemcpy(d_C_hi, h_C_hi.data(), N * sizeof(uint64_t), cudaMemcpyHostToDevice);
     cudaMemcpy(d_C_lo, h_C_lo.data(), N * sizeof(uint64_t), cudaMemcpyHostToDevice);
 
-    TestDataTypeUint* d_out;
-    cudaMalloc(&d_out, N * sizeof(TestDataTypeUint));
-    cudaMemset(d_out, 0, N * sizeof(TestDataTypeUint));
+    OutputLimbType* d_out;
+    cudaMalloc(&d_out, N * sizeof(OutputLimbType));
+    cudaMemset(d_out, 0, N * sizeof(OutputLimbType));
 
     size_t num_segs = (N + CARRY_SEG - 1) / CARRY_SEG;
     int64_t* d_seg_carry;
@@ -71,12 +71,22 @@ vector<TestDataTypeUint> run_carry_prop(
 
     carry_inter_segment_kernel<<<1, 1>>>(d_seg_carry, num_segs);
 
-    carry_fixup_kernel<<<num_segs, 1>>>(d_out, d_seg_carry, N);
+    int* d_escape;
+    cudaMalloc(&d_escape, sizeof(int));
+    for (;;) {
+        cudaMemset(d_escape, 0, sizeof(int));
+        carry_fixup_kernel<<<num_segs, 1>>>(d_out, d_seg_carry, N, num_segs, d_escape);
+        int escaped = 0;
+        cudaMemcpy(&escaped, d_escape, sizeof(int), cudaMemcpyDeviceToHost);
+        if (!escaped)
+            break;
+    }
+    cudaFree(d_escape);
 
     cudaDeviceSynchronize();
 
-    vector<TestDataTypeUint> out(N);
-    cudaMemcpy(out.data(), d_out, N * sizeof(TestDataTypeUint), cudaMemcpyDeviceToHost);
+    vector<OutputLimbType> out(N);
+    cudaMemcpy(out.data(), d_out, N * sizeof(OutputLimbType), cudaMemcpyDeviceToHost);
 
     cudaFree(d_C_hi);
     cudaFree(d_C_lo);
@@ -143,14 +153,14 @@ void test_small_values_no_carry() {
 }
 
 void test_single_overflow() {
-    // one coefficient just over LIMB_MASK — forces carry into next limb
+    // one coefficient just over OUTPUT_LIMB_MASK — forces carry into next limb
     size_t N = 64;
     unsigned __int128 M, M_half;
     get_M(M, M_half);
 
     vector<uint64_t> C_hi(N, 0), C_lo(N, 0);
-    // set coeff 0 to LIMB_MASK + 1 — should produce limb=0, carry=1
-    C_lo[0] = LIMB_MASK + 1;
+    // set coeff 0 to OUTPUT_LIMB_MASK + 1 — should produce limb=0, carry=1
+    C_lo[0] = OUTPUT_LIMB_MASK + 1;
 
     auto gpu = run_carry_prop(C_hi, C_lo, M, M_half, N);
     auto cpu = cpu_carry_prop(C_hi, C_lo, M, M_half, N);
@@ -160,12 +170,12 @@ void test_single_overflow() {
 }
 
 void test_max_limb_values() {
-    // every coefficient at LIMB_MASK — heavy carry chain across all segments
+    // every coefficient at OUTPUT_LIMB_MASK — heavy carry chain across all segments
     size_t N = 1 << 10;
     unsigned __int128 M, M_half;
     get_M(M, M_half);
 
-    vector<uint64_t> C_hi(N, 0), C_lo(N, LIMB_MASK);
+    vector<uint64_t> C_hi(N, 0), C_lo(N, OUTPUT_LIMB_MASK);
 
     auto gpu = run_carry_prop(C_hi, C_lo, M, M_half, N);
     auto cpu = cpu_carry_prop(C_hi, C_lo, M, M_half, N);
@@ -194,13 +204,13 @@ void test_negative_after_M_reduction() {
 
 void test_cross_segment_carry() {
     // carry must propagate across a segment boundary
-    // fill last coeff of segment 0 with LIMB_MASK to force carry into segment 1
+    // fill last coeff of segment 0 with OUTPUT_LIMB_MASK to force carry into segment 1
     size_t N = CARRY_SEG * 2;
     unsigned __int128 M, M_half;
     get_M(M, M_half);
 
     vector<uint64_t> C_hi(N, 0), C_lo(N, 0);
-    C_lo[CARRY_SEG - 1] = LIMB_MASK + 1;  // last coeff of seg 0 overflows
+    C_lo[CARRY_SEG - 1] = OUTPUT_LIMB_MASK + 1;  // last coeff of seg 0 overflows
 
     auto gpu = run_carry_prop(C_hi, C_lo, M, M_half, N);
     auto cpu = cpu_carry_prop(C_hi, C_lo, M, M_half, N);

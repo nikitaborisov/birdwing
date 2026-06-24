@@ -155,8 +155,18 @@ main_64: | $(OBJ_DIR) $(GPU_NTT_LIB)
 	$(NVCC) $(NVCCFLAGS) -DLIMB_BITS=64 $(INCLUDES) $(LIB_PATHS) \
 		$(E2E_SRCS) -o build/test_full_multiply_64 $(LIBS)
 
+PIPELINE_CRT_SRCS := tests/test_pipeline_crt.cpp $(CPP_SRCS) $(CU_SRCS)
+
+$(TEST_BUILD)/test_pipeline_crt_64: | $(TEST_BUILD) $(GPU_NTT_LIB)
+	$(NVCC) $(NVCCFLAGS) -DLIMB_BITS=64 $(INCLUDES) $(LIB_PATHS) \
+		$(PIPELINE_CRT_SRCS) -o $@ $(LIBS)
+
+test_pipeline_crt_64: $(TEST_BUILD)/test_pipeline_crt_64
+	@echo "===== pipeline CRT 64-bit ====="
+	@$(TEST_BUILD)/test_pipeline_crt_64
+
 # ================================================================
 # Phony targets
 # ================================================================
 
-.PHONY: test test_zero_pad test_crt_gpu test_carry_prop test_ntt_limits main_32 main_64
+.PHONY: test test_zero_pad test_crt_gpu test_carry_prop test_ntt_limits main_32 main_64 test_pipeline_crt_64

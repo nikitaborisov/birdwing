@@ -20,10 +20,9 @@
 using namespace std;
 
 // parameters
-using limb_t = TestDataTypeUint; // each limb is stored in 32-bit containers
 
 // host functions
-void host_multiply_merge(const vector<uint32_t> &A, const vector<uint32_t> &B, vector<TestDataTypeUint> &C, chrono::duration<double, milli> &duration) {
+void host_multiply_merge(const vector<uint32_t> &A, const vector<uint32_t> &B, vector<OutputLimbType> &C, chrono::duration<double, milli> &duration) {
     size_t L_A = A.size();
     size_t L_B = B.size();
     size_t L_C = L_A + L_B - 1;
@@ -41,7 +40,7 @@ void host_multiply_merge(const vector<uint32_t> &A, const vector<uint32_t> &B, v
     memcpy(a_pinned, A.data(), L_A * sizeof(uint32_t));
     memcpy(b_pinned, B.data(), L_B * sizeof(uint32_t));
 
-    vector<TestDataTypeUint> C_out(N + 1, 0);
+    vector<OutputLimbType> C_out(N + 1, 0);
 
     C.resize(L_C + 1, 0);
 

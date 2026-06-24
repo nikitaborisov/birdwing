@@ -401,9 +401,10 @@ NTTContext allocate_ntt_context(const NTTPrecomputed &pre, size_t L_A, size_t L_
     cudaMalloc(&ctx.b_raw_dev, L_B * sizeof(uint32_t));
     cudaMalloc(&ctx.d_C_hi, pre.N * sizeof(uint64_t));
     cudaMalloc(&ctx.d_C_lo, pre.N * sizeof(uint64_t));
-    cudaMalloc(&ctx.d_out,  (pre.N + 1) * sizeof(TestDataTypeUint));
+    cudaMalloc(&ctx.d_out,  (pre.N + 1) * sizeof(OutputLimbType));
     size_t num_segs = (pre.N + CARRY_SEG - 1) / CARRY_SEG;
     cudaMalloc(&ctx.d_seg_carry, num_segs * sizeof(int64_t));
+    cudaMalloc(&ctx.d_carry_escape, sizeof(int));
 
     cudaStreamCreate(&ctx.stream_a);
     cudaStreamCreate(&ctx.stream_b);
@@ -418,9 +419,11 @@ void execute_ntt_multiply(
     NTTContext &ctx,
     const uint32_t* a_pinned,
     const uint32_t* b_pinned,
-    vector<TestDataTypeUint> &C_out,
+    vector<OutputLimbType> &C_out,
     __int128 M, __int128 M_half,
-    NTTTiming* timing_out)
+    NTTTiming* timing_out,
+    vector<uint64_t>* crt_hi_out,
+    vector<uint64_t>* crt_lo_out)
 {
     const bool profile = timing_out != nullptr;
 #ifdef TIMING
@@ -818,6 +821,25 @@ void execute_ntt_multiply(
     if (prof.on)
         timing.crt_ms = prof.crt_timer->toc(ctx.stream_a);
 
+    if (crt_hi_out && crt_lo_out) {
+        crt_hi_out->resize(ctx.N);
+        crt_lo_out->resize(ctx.N);
+        cudaMemcpy(crt_hi_out->data(), ctx.d_C_hi, ctx.N * sizeof(uint64_t),
+                   cudaMemcpyDeviceToHost);
+        cudaMemcpy(crt_lo_out->data(), ctx.d_C_lo, ctx.N * sizeof(uint64_t),
+                   cudaMemcpyDeviceToHost);
+
+        if (prof.on)
+            cudaEventRecord(prof.execute_stop, 0);
+
+        if (prof.on)
+            prof.fill(timing);
+
+        if (timing_out)
+            *timing_out = timing;
+        return;
+    }
+
     if (prof.on)
         prof.carry_timer->tic(ctx.stream_a);
 
@@ -829,10 +851,17 @@ void execute_ntt_multiply(
     carry_inter_segment_kernel<<<1, 1, 0, ctx.stream_a>>>(
         ctx.d_seg_carry, num_segs);
 
-    carry_fixup_kernel<<<num_segs, 1, 0, ctx.stream_a>>>(
-        ctx.d_out, ctx.d_seg_carry, ctx.N);
-
-    cudaStreamSynchronize(ctx.stream_a);
+    for (;;) {
+        cudaMemsetAsync(ctx.d_carry_escape, 0, sizeof(int), ctx.stream_a);
+        carry_fixup_kernel<<<num_segs, 1, 0, ctx.stream_a>>>(
+            ctx.d_out, ctx.d_seg_carry, ctx.N, num_segs, ctx.d_carry_escape);
+        int escaped = 0;
+        cudaMemcpyAsync(&escaped, ctx.d_carry_escape, sizeof(int),
+                        cudaMemcpyDeviceToHost, ctx.stream_a);
+        cudaStreamSynchronize(ctx.stream_a);
+        if (!escaped)
+            break;
+    }
 
     if (prof.on)
         timing.carry_ms = prof.carry_timer->toc(ctx.stream_a);
@@ -841,7 +870,7 @@ void execute_ntt_multiply(
         prof.d2h_timer->tic(0);
 
     cudaMemcpy(C_out.data(), ctx.d_out,
-            (ctx.N + 1) * sizeof(TestDataTypeUint), cudaMemcpyDeviceToHost);
+            (ctx.N + 1) * sizeof(OutputLimbType), cudaMemcpyDeviceToHost);
 
     if (prof.on)
         timing.d2h_ms = prof.d2h_timer->toc(0);
@@ -897,6 +926,7 @@ void cleanup_ntt_context(NTTContext &ctx) {
     cudaFree(ctx.d_C_lo);
     cudaFree(ctx.d_out);
     cudaFree(ctx.d_seg_carry);
+    cudaFree(ctx.d_carry_escape);
 }
 
 void cleanup_ntt_precomputed(NTTPrecomputed &pre) {
