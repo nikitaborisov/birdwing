@@ -262,11 +262,6 @@ static BenchRow benchmark_L(size_t L_arg, int warmup, int iters, uint64_t seed)
         memcpy(b_pinned, B.data(), L_B * sizeof(uint32_t));
     });
 
-    unsigned __int128 M = 1;
-    for (int j = 0; j < NUM_MODULI; j++)
-        M *= moduli[j];
-    const __int128 M_half = static_cast<__int128>(M >> 1);
-
     NTTPrecomputed pre{};
     PrecomputeTiming pre_timing{};
     pre = precompute_ntt(N, &pre_timing);
@@ -286,7 +281,7 @@ static BenchRow benchmark_L(size_t L_arg, int warmup, int iters, uint64_t seed)
     vector<OutputLimbType> C_out(N + 1, 0);
 
     for (int i = 0; i < warmup; i++)
-        execute_ntt_multiply(ctx, a_pinned, b_pinned, C_out, M, M_half);
+        execute_ntt_multiply(ctx, a_pinned, b_pinned, C_out);
 
     vector<double> execute_samples;
     vector<NTTTiming> stage_samples;
@@ -296,7 +291,7 @@ static BenchRow benchmark_L(size_t L_arg, int warmup, int iters, uint64_t seed)
     for (int i = 0; i < iters; i++) {
         NTTTiming timing{};
         execute_ntt_multiply(
-            ctx, a_pinned, b_pinned, C_out, M, M_half, &timing);
+            ctx, a_pinned, b_pinned, C_out, &timing);
         execute_samples.push_back(static_cast<double>(timing.total_ms));
         stage_samples.push_back(timing);
     }

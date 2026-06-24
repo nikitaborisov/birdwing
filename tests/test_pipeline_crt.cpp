@@ -212,10 +212,6 @@ static void run_case(size_t L, uint64_t seed) {
     size_t N = padded_ntt_size(A.size(), B.size());
     ensure_ntt_size_supported(N);
 
-    unsigned __int128 M = 1;
-    for (int j = 0; j < NUM_MODULI; j++)
-        M *= moduli[j];
-
     uint32_t* a_pinned = nullptr;
     uint32_t* b_pinned = nullptr;
     cudaMallocHost(&a_pinned, A.size() * sizeof(uint32_t));
@@ -231,10 +227,8 @@ static void run_case(size_t L, uint64_t seed) {
 
     vector<uint64_t> gpu_hi, gpu_lo;
     vector<OutputLimbType> dummy_out;
-    __int128 M_half = static_cast<__int128>(M >> 1);
-
     auto t_gpu = Clock::now();
-    execute_ntt_multiply(ctx, a_pinned, b_pinned, dummy_out, M, M_half,
+    execute_ntt_multiply(ctx, a_pinned, b_pinned, dummy_out,
                          nullptr, &gpu_hi, &gpu_lo);
     printf("  L=%zu GPU through CRT: %.1f ms\n", L, ms_since(t_gpu));
 

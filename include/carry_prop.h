@@ -9,9 +9,7 @@ __global__ void carry_intra_segment_kernel(
     const uint64_t*   __restrict__ C_lo,
     OutputLimbType* __restrict__ out,
     int64_t*          __restrict__ seg_carry,
-    size_t N,
-    unsigned __int128 M,
-    unsigned __int128 M_half);
+    size_t N);
 
 __global__ void carry_inter_segment_kernel(
     int64_t* __restrict__ seg_carry,

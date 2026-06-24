@@ -420,7 +420,6 @@ void execute_ntt_multiply(
     const uint32_t* a_pinned,
     const uint32_t* b_pinned,
     vector<OutputLimbType> &C_out,
-    __int128 M, __int128 M_half,
     NTTTiming* timing_out,
     vector<uint64_t>* crt_hi_out,
     vector<uint64_t>* crt_lo_out)
@@ -801,21 +800,6 @@ void execute_ntt_multiply(
         printf("CRT[%d] = hi=%llu lo=%llu\n",
             k, hi, lo);
     }
-
-    unsigned long long M_hi =
-        (unsigned long long)(((__uint128_t)M) >> 64);
-
-    unsigned long long M_lo =
-        (unsigned long long)((__uint128_t)M);
-
-    unsigned long long MH_hi =
-        (unsigned long long)(((__uint128_t)M_half) >> 64);
-
-    unsigned long long MH_lo =
-        (unsigned long long)((__uint128_t)M_half);
-
-    printf("M      = (%llu,%llu)\n", M_hi, M_lo);
-    printf("M_half = (%llu,%llu)\n", MH_hi, MH_lo);
     #endif
 
     if (prof.on)
@@ -846,7 +830,7 @@ void execute_ntt_multiply(
     size_t num_segs = (ctx.N + CARRY_SEG - 1) / CARRY_SEG;
 
     carry_intra_segment_kernel<<<num_segs, 1, 0, ctx.stream_a>>>(
-        ctx.d_C_hi, ctx.d_C_lo, ctx.d_out, ctx.d_seg_carry, ctx.N, M, M_half);
+        ctx.d_C_hi, ctx.d_C_lo, ctx.d_out, ctx.d_seg_carry, ctx.N);
 
     carry_inter_segment_kernel<<<1, 1, 0, ctx.stream_a>>>(
         ctx.d_seg_carry, num_segs);

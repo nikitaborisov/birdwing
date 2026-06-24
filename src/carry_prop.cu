@@ -10,9 +10,7 @@ __global__ void carry_intra_segment_kernel(
     const uint64_t* __restrict__ C_lo,
     OutputLimbType* __restrict__ out,
     int64_t*          __restrict__ seg_carry,
-    size_t N,
-    unsigned __int128 M,
-    unsigned __int128 M_half)
+    size_t N)
 {
     if (threadIdx.x != 0) return;
 
@@ -23,7 +21,6 @@ __global__ void carry_intra_segment_kernel(
 
     for (size_t i = seg_start; i < seg_end; i++) {
         __int128 val = ((__uint128_t)C_hi[i] << 64) | C_lo[i];
-        if (val > (__int128)M_half) val -= (__int128)M;
 
         __int128 temp = val + carry;
         OutputLimbType limb = (OutputLimbType)(temp & OUTPUT_LIMB_MASK);

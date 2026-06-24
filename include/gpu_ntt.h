@@ -110,7 +110,6 @@ void execute_ntt_multiply(
     // changed from TestDataTypeUint to uint32_t
 	const uint32_t* b_pinned,
 	vector<OutputLimbType> &C_out,
-	__int128 M, __int128 M_half,
 	NTTTiming* timing_out = nullptr,
 	vector<uint64_t>* crt_hi_out = nullptr,
 	vector<uint64_t>* crt_lo_out = nullptr
