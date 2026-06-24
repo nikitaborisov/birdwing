@@ -293,7 +293,119 @@ Based on recent commit history and in-code TODOs:
 - [ ] **Pointwise multiply**: `pointwise_mul_kernel` uses direct `% modulus`; comments note Barrett reduction should replace it (`gpu_ntt.cu`)
 - [ ] **`main.cpp`**: `host_multiply_merge` / `host_multiply_4step` calls are commented out; CLI is a stub
 - [ ] **4-step multiply**: `multiply.h` references a 4-step method; not wired in `main.cpp`
-- [ ] **Hardcoded inverses**: `crt_utils.h` notes modular inverses could be precomputed at build time
+- [ ] **Dual-width binary**: 32- and 64-bit pipelines require separate executables today (`-DLIMB_BITS` at compile time); see [Dual-width unified executable](#dual-width-unified-executable--investigation)
+
+### Dual-width unified executable — investigation
+
+Today the 32-bit and 64-bit multiply pipelines are **mutually exclusive at link time**. Each width is a full recompile of all `src/*.cu` and `src/*.cpp` with `-DLIMB_BITS=32` or `-DLIMB_BITS=64`, producing separate binaries (`build/bench_full_multiply_32`, `build/bench_full_multiply_64`, `build/test_full_multiply_{32,64}`). The default `make` target and shared `build/*.o` cache always use `LIMB_BITS=32` (from `config.h`).
+
+**Goal:** one executable that can run either pipeline at runtime (e.g. `--limb-bits 32|64` or automatic selection by operand size).
+
+#### What is *not* a barrier
+
+| Area | Status |
+|------|--------|
+| **GPU-NTT** (`libntt-1.0.a`) | Already ships explicit instantiations for both `Data32` and `Data64`. `bench/gpu_ntt_benchmark.cu` calls both types in the same translation unit. |
+| **Host input format** | Always `uint32_t` limbs; zero-pad widens to `TestDataTypeUint` on device. No input-format fork between builds. |
+| **CRT coefficient width** | Garner output is always 128-bit (`d_C_hi` / `d_C_lo`); only final carry-propagation limb width differs. |
+
+The blockers are entirely inside this repo's compile-time configuration and symbol layout.
+
+#### Barrier 1 — `LIMB_BITS` is a global compile-time switch
+
+`include/config.h` gates almost everything through a single `#if LIMB_BITS == 64`:
+
+| Symbol | 32-bit build | 64-bit build |
+|--------|--------------|--------------|
+| `TestDataTypeUint` | `uint32_t` | `uint64_t` |
+| `NUM_MODULI` | 3 | 2 |
+| `LIMB_MASK` | `0xFFFFFFFF` | `0xFFFFFFFFFFFFFFFF` |
+| NTT element type (`gpu_ntt.h`) | `Data32` | `Data64` |
+| RNS primes (`gpu_ntt.cu`) | 3 × ~29-bit | 2 × 62-bit |
+
+Every `.cu` and most `.cpp` files include `config.h` (directly or via `gpu_ntt.h`). There is no runtime width parameter anywhere in the public API (`host_multiply_merge`, `execute_ntt_multiply`, `NTTContext`, etc.).
+
+`if constexpr (sizeof(TestDataTypeUint) == 4)` appears in a few kernels (`pointwise_mul_kernel`, `mulmod64`), but those branches are resolved at compile time — the TU still emits only one width's machine code.
+
+#### Barrier 2 — duplicate linker symbols
+
+If you naïvely compile `gpu_ntt.cu`, `crt_gpu.cu`, `carry_prop.cu`, etc. twice (once per width) and link both object sets, the linker sees **identical unmangled names** with incompatible definitions:
+
+- **Globals:** `moduli`, `roots_of_unity_max` (`gpu_ntt.cu`) — different vector contents and element types.
+- **Host functions:** `precompute_ntt`, `allocate_ntt_context`, `execute_ntt_multiply`, `compute_garner_params`, `zero_pad_gpu`, … — same signatures, different struct layouts and loop bounds (`NUM_MODULI`).
+- **CUDA device symbols:** `crt_combine_kernel`, `carry_intra_segment_kernel`, `zero_pad_kernel`, `pointwise_mul_kernel` — one mangled name per kernel, but body differs (limb mask/shift, unroll counts, residue pointer element size).
+
+A single `LIMB_BITS` value must be chosen for the whole link unit. The current dual-width Makefile targets sidestep this by passing all sources to one `nvcc` invocation per binary instead of linking width-specific `.o` files.
+
+#### Barrier 3 — CUDA constant memory is width-specific
+
+`src/crt_gpu.cu` declares device constant arrays sized by `NUM_MODULI`:
+
+```cpp
+__constant__ uint64_t d_primes[NUM_MODULI];
+__constant__ uint64_t d_M_mod_table[NUM_MODULI][NUM_MODULI];
+__constant__ TestDataTypeUint* d_residue_ptrs[NUM_MODULI];
+```
+
+The 32-bit build allocates 3-modulus tables (9-element `M_mod_table`); the 64-bit build allocates 2-modulus tables (4 elements). `crt_combine_kernel` uses `#pragma unroll` over `NUM_MODULI` and calls `mulmod64`, which contains a `#if LIMB_BITS == 64` device-code fork (Barrett vs exact division). Two width variants cannot share these `__constant__` symbol names in one module.
+
+Upload functions (`upload_garner_params`, `upload_residue_ptrs`) also assume a single active constant-memory layout. Running both pipelines in one process would require **separate constant-memory namespaces** (separate `.cu` TUs or renamed symbols via macros) and a host-side dispatch layer that uploads the correct tables before each multiply.
+
+#### Barrier 4 — struct and buffer layout depends on width
+
+`NTTContext` and `NTTPrecomputed` (`include/gpu_ntt.h`) embed `vector<NTTParameters<TestDataType>>` where `TestDataType` is `Data32` or `Data64`. That changes:
+
+- Per-modulus buffer sizes (`sizeof(TestDataType) * N`)
+- Twiddle / modulus / n⁻¹ table types (`Root<Data32>` vs `Root<Data64>`, etc.)
+- Number of modulus slots (`NUM_MODULI`)
+
+`CRTGarnerParams` (`include/crt_gpu.h`) has `uint64_t M_mod_table[NUM_MODULI][NUM_MODULI]` — **different struct sizes** between builds (3×3 vs 2×2). A unified host struct would need `MAX_MODULI` padding or separate per-width context types.
+
+Output buffers (`d_out`, `C_out`) are `TestDataTypeUint*`, so the host result vector is either 32- or 64-bit limbs. A unified API must either expose two output modes or always emit one width and convert on the host.
+
+#### Barrier 5 — build system assumes one width per object directory
+
+`make/sources.mk` compiles each `src/*.cu` → `build/*.o` once, with no `LIMB_BITS` suffix. Dual-width test targets (`make/tests.mk`) either:
+
+- Recompile selected sources in a **single** `nvcc` link line (`main_32` / `main_64`, `bench_full_*`), or
+- For `test_ntt_limits` only, compile `ntt_limits.cpp` twice into `ntt_limits_32.o` / `ntt_limits_64.o` with distinct output names.
+
+The shared `build/*.o` cache cannot safely mix widths: an object built with `LIMB_BITS=32` would poison a subsequent `LIMB_BITS=64` link if reused. Unifying into one executable requires either width-suffixed object files for **all** pipeline sources or a template/facade split where width-neutral code links once.
+
+#### Existing partial pattern: `test_ntt_limits`
+
+`make/tests.mk` already dual-compiles `ntt_limits.cpp` into separate objects (`ntt_limits_32.o`, `ntt_limits_64.o`) and links each with a matching test driver. This works because `ntt_limits.cpp` has no CUDA kernels, no `__constant__` symbols, and no shared globals — it only reads `extern moduli`. The full pipeline cannot use this pattern without extending it to every `.cu` file and renaming all exported symbols.
+
+#### Viable unification approaches (ordered by fit)
+
+1. **Template pipeline + explicit instantiation + runtime facade** *(recommended)*
+   - Refactor core logic into `PipelineTraits<32>` / `PipelineTraits<64>` (or a `LimbWidth` enum + partial specializations).
+   - One `.cu` per width with `template struct Pipeline<32>;` / `Pipeline<64>` explicit instantiations and **distinct symbol prefixes** (`ntt32::execute`, `ntt64::execute`).
+   - Thin host facade (`multiply_unified.cpp`) holds `std::variant` or two optional contexts and dispatches on a runtime flag.
+   - GPU-NTT calls already support both `Data32` and `Data64`; no library change needed.
+
+2. **Macro-prefixed dual compilation** *(minimal refactor, Makefile-heavy)*
+   - Compile each pipeline `.cu` twice: `-DLIMB_BITS=32 -DPIPELINE_NS=ntt32` and `-DLIMB_BITS=64 -DPIPELINE_NS=ntt64`, wrapping exports in `PIPELINE_NS`.
+   - Same idea for `__constant__` arrays (`d_primes` → `ntt32_d_primes` via macro).
+   - Fastest path to one binary; leaves preprocessor forks in place and doubles compile time for GPU sources.
+
+3. **`MAX_MODULI = 3` padding** *(partial, insufficient alone)*
+   - Pad 64-bit RNS to 3 moduli with a dummy third prime to unify `CRTGarnerParams` and constant-memory sizes.
+   - Does **not** solve `Data32` vs `Data64` NTT types, carry limb width, or kernel monomorphism.
+
+4. **Two shared objects + `dlopen`** *(operational split)*
+   - Build `libbirdwing_32.so` and `libbirdwing_64.so`; loader picks at runtime.
+   - Avoids symbol collisions but does not produce a single static binary; doubles deployment surface.
+
+#### Suggested implementation order
+
+1. Introduce `PipelineTraits` / width tag without changing behaviour; keep separate binaries passing tests.
+2. Split `gpu_ntt.cu`, `crt_gpu.cu`, `carry_prop.cu`, `zero_pad.cu` into width-specific TUs with explicit symbol prefixes.
+3. Add unified `NTTContextUnified` (or dual optional contexts) and `execute_ntt_multiply(width, …)` facade.
+4. Extend Makefile: `build/*_32.o`, `build/*_64.o`, single `main` / `bench_full` link target.
+5. Add runtime flag to `main` and `gpu_full_multiply_benchmark.cpp`; update `run_gpu_bench.py` to invoke one binary with `--limb-bits both`.
+
+**Estimated scope:** moderate refactor (~6–8 source files, Makefile rules, API header); not blocked by GPU-NTT or CUDA hardware limits.
 
 ### Suggested next steps
 
@@ -302,6 +414,7 @@ Based on recent commit history and in-code TODOs:
 3. **Parameter tooling** — promote `scripts/find_prim_roots.py` output into generated headers for new prime sets
 4. **64-bit scaling** — use `bench_full_64` to profile larger `N` and limb counts; compare CRT/carry vs NTT (`TIMING=1`)
 5. **CI / reproducibility** — document exact GPU-NTT and GMP install steps; pin moduli in a single config source
+6. **Unified dual-width binary** — follow the approach in [Dual-width unified executable](#dual-width-unified-executable--investigation) above
 
 ---
 
