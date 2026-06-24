@@ -94,6 +94,17 @@ static double time_host_ms(Fn&& fn)
     return host_elapsed_ms(t0, t1);
 }
 
+// First cudaMallocHost in a process pays driver init; warm up before timing setup.
+static void warmup_cuda_runtime()
+{
+    uint32_t* pinned = nullptr;
+    void* dev = nullptr;
+    cudaMallocHost(&pinned, 4096);
+    cudaMalloc(&dev, 4096);
+    cudaFree(dev);
+    cudaFreeHost(pinned);
+}
+
 struct TimingStats {
     double mean_ms = 0.0;
     double stddev_ms = 0.0;
@@ -472,6 +483,8 @@ int main(int argc, char* argv[])
          << ", max L_arg=" << (max_supported_logN() - 1)
          << " / max L=" << max_supported_limb_count() << ")\n";
     cout << string(72, '-') << "\n";
+
+    warmup_cuda_runtime();
 
     vector<BenchRow> rows;
     rows.reserve(L_args.size());
