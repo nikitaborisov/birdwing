@@ -11,15 +11,15 @@ BENCH_FULL_64 := build/bench_full_multiply_64
 $(BENCH_OBJ): $(BENCH_SRC) | $(OBJ_DIR)
 	$(NVCC) $(NVCCFLAGS) $(INCLUDES) -c $< -o $@
 
-$(BENCH_TARGET): $(BENCH_OBJ) $(CPP_OBJS) $(CU_OBJS)
+$(BENCH_TARGET): $(BENCH_OBJ) $(CPP_OBJS) $(CU_OBJS) | $(GPU_NTT_LIB)
 	$(NVCC) $(NVCCFLAGS) $(INCLUDES) $(LIB_PATHS) \
 		-o $@ $^ $(LIBS)
 
-$(BENCH_FULL_32): $(BENCH_FULL_SRCS) | $(OBJ_DIR)
+$(BENCH_FULL_32): $(BENCH_FULL_SRCS) | $(OBJ_DIR) $(GPU_NTT_LIB)
 	$(NVCC) $(NVCCFLAGS) -DLIMB_BITS=32 $(INCLUDES) $(LIB_PATHS) \
 		$^ -o $@ $(LIBS)
 
-$(BENCH_FULL_64): $(BENCH_FULL_SRCS) | $(OBJ_DIR)
+$(BENCH_FULL_64): $(BENCH_FULL_SRCS) | $(OBJ_DIR) $(GPU_NTT_LIB)
 	$(NVCC) $(NVCCFLAGS) -DLIMB_BITS=64 $(INCLUDES) $(LIB_PATHS) \
 		$^ -o $@ $(LIBS)
 
@@ -27,7 +27,7 @@ $(BENCH_FULL_64): $(BENCH_FULL_SRCS) | $(OBJ_DIR)
 # Convenience targets
 # ================================================================
 
-bench: $(BENCH_TARGET)
+bench: gpu-ntt $(BENCH_TARGET)
 bench_full_32: $(BENCH_FULL_32)
 bench_full_64: $(BENCH_FULL_64)
 bench_full: bench_full_32 bench_full_64

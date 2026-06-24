@@ -1,4 +1,11 @@
 # ================================================================
+# Project root
+# ================================================================
+
+MAKEFILE_DIR := $(dir $(abspath $(lastword $(MAKEFILE_LIST))))
+ROOT_DIR     := $(abspath $(MAKEFILE_DIR)/..)
+
+# ================================================================
 # Toolchain
 # ================================================================
 
@@ -45,21 +52,34 @@ TEST_BUILD  := $(OBJ_DIR)/tests
 # Includes / Libraries
 # ================================================================
 
+GPU_NTT_DIR   := $(ROOT_DIR)/GPU-NTT
+GPU_NTT_BUILD := $(GPU_NTT_DIR)/build
+GPU_NTT_LIB   := $(GPU_NTT_BUILD)/src/libntt-1.0.a
+GPU_NTT_INC   := $(GPU_NTT_DIR)/src/include
+
+GMP_PREFIX ?=
+ifneq ($(GMP_PREFIX),)
+    GMP_INCLUDES := -I$(GMP_PREFIX)/include
+    GMP_LIB_PATH := -L$(GMP_PREFIX)/lib
+else
+    GMP_INCLUDES :=
+    GMP_LIB_PATH :=
+endif
+
 INCLUDES := \
     -Iinclude \
     -I$(CUDA_PATH)/include \
-    -I$(HOME)/.local/include \
-    -I$(HOME)/GPU-NTT/src/include \
-    -I$(HOME)/GPU-NTT/src/include/common \
-    -I$(HOME)/GPU-NTT/src/include/ntt_merge
+    -I$(GPU_NTT_INC) \
+    -I$(GPU_NTT_INC)/gpuntt/ntt_merge \
+    $(GMP_INCLUDES)
 
 LIB_PATHS := \
-    -L$(HOME)/.local/lib \
-    -L$(HOME)/gmp-local/lib
+    $(GMP_LIB_PATH)
 
 LIBS := \
-    -lntt-1.0 \
-    -lgmp
+    $(GPU_NTT_LIB) \
+    -lgmp \
+    -lcudart
 
 # ================================================================
 # Targets

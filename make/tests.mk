@@ -3,13 +3,13 @@
 # ================================================================
 
 # Build C++ tests
-$(TEST_BUILD)/%: $(TEST_DIR)/%.cpp $(CPP_OBJS) $(CU_OBJS) | $(TEST_BUILD)
+$(TEST_BUILD)/%: $(TEST_DIR)/%.cpp $(CPP_OBJS) $(CU_OBJS) | $(TEST_BUILD) $(GPU_NTT_LIB)
 	$(NVCC) $(NVCCFLAGS) $(INCLUDES) \
 		$< $(CPP_OBJS) $(CU_OBJS) \
 		-o $@ $(LIB_PATHS) $(LIBS)
 
 # Build CUDA tests
-$(TEST_BUILD)/%: $(TEST_DIR)/%.cu $(CPP_OBJS) $(CU_OBJS) | $(TEST_BUILD)
+$(TEST_BUILD)/%: $(TEST_DIR)/%.cu $(CPP_OBJS) $(CU_OBJS) | $(TEST_BUILD) $(GPU_NTT_LIB)
 	$(NVCC) $(NVCCFLAGS) $(INCLUDES) \
 		$< $(CPP_OBJS) $(CU_OBJS) \
 		-o $@ $(LIB_PATHS) $(LIBS)
@@ -24,7 +24,7 @@ $(TEST_BUILD)/%: $(TEST_DIR)/%.cu $(CPP_OBJS) $(CU_OBJS) | $(TEST_BUILD)
 # Run one:
 #   make test TEST=test_name
 
-test: $(TEST_BINS)
+test: gpu-ntt $(TEST_BINS)
 ifdef TEST
 	@echo "Running test: $(TEST)"
 	@$(TEST_BUILD)/$(TEST)
@@ -44,11 +44,11 @@ endif
 ZP_SRC      := $(TEST_DIR)/test_zero_pad.cu
 ZP_SRCS_DEP := $(SRC_DIR)/zero_pad.cu
 
-$(TEST_BUILD)/test_zero_pad_32: $(ZP_SRC) $(ZP_SRCS_DEP) | $(TEST_BUILD)
+$(TEST_BUILD)/test_zero_pad_32: $(ZP_SRC) $(ZP_SRCS_DEP) | $(TEST_BUILD) $(GPU_NTT_LIB)
 	$(NVCC) $(NVCCFLAGS) -DLIMB_BITS=32 $(INCLUDES) \
 		$^ -o $@ $(LIB_PATHS) $(LIBS)
 
-$(TEST_BUILD)/test_zero_pad_64: $(ZP_SRC) $(ZP_SRCS_DEP) | $(TEST_BUILD)
+$(TEST_BUILD)/test_zero_pad_64: $(ZP_SRC) $(ZP_SRCS_DEP) | $(TEST_BUILD) $(GPU_NTT_LIB)
 	$(NVCC) $(NVCCFLAGS) -DLIMB_BITS=64 $(INCLUDES) \
 		$^ -o $@ $(LIB_PATHS) $(LIBS)
 
@@ -67,11 +67,11 @@ test_zero_pad: \
 CRT_SRC      := $(TEST_DIR)/test_crt_gpu.cu
 CRT_SRCS_DEP := $(SRC_DIR)/crt_gpu.cu $(SRC_DIR)/crt_utils.cpp
 
-$(TEST_BUILD)/test_crt_gpu_32: $(CRT_SRC) $(CRT_SRCS_DEP) | $(TEST_BUILD)
+$(TEST_BUILD)/test_crt_gpu_32: $(CRT_SRC) $(CRT_SRCS_DEP) | $(TEST_BUILD) $(GPU_NTT_LIB)
 	$(NVCC) $(NVCCFLAGS) -DLIMB_BITS=32 $(INCLUDES) \
 		$^ -o $@ $(LIB_PATHS) $(LIBS)
 
-$(TEST_BUILD)/test_crt_gpu_64: $(CRT_SRC) $(CRT_SRCS_DEP) | $(TEST_BUILD)
+$(TEST_BUILD)/test_crt_gpu_64: $(CRT_SRC) $(CRT_SRCS_DEP) | $(TEST_BUILD) $(GPU_NTT_LIB)
 	$(NVCC) $(NVCCFLAGS) -DLIMB_BITS=64 $(INCLUDES) \
 		$^ -o $@ $(LIB_PATHS) $(LIBS)
 
@@ -90,11 +90,11 @@ test_crt_gpu: \
 CARRY_SRC      := $(TEST_DIR)/test_carry_prop.cu
 CARRY_SRCS_DEP := $(SRC_DIR)/carry_prop.cu
 
-$(TEST_BUILD)/test_carry_prop_32: $(CARRY_SRC) $(CARRY_SRCS_DEP) | $(TEST_BUILD)
+$(TEST_BUILD)/test_carry_prop_32: $(CARRY_SRC) $(CARRY_SRCS_DEP) | $(TEST_BUILD) $(GPU_NTT_LIB)
 	$(NVCC) $(NVCCFLAGS) -DLIMB_BITS=32 $(INCLUDES) \
 		$^ -o $@ $(LIB_PATHS) $(LIBS)
 
-$(TEST_BUILD)/test_carry_prop_64: $(CARRY_SRC) $(CARRY_SRCS_DEP) | $(TEST_BUILD)
+$(TEST_BUILD)/test_carry_prop_64: $(CARRY_SRC) $(CARRY_SRCS_DEP) | $(TEST_BUILD) $(GPU_NTT_LIB)
 	$(NVCC) $(NVCCFLAGS) -DLIMB_BITS=64 $(INCLUDES) \
 		$^ -o $@ $(LIB_PATHS) $(LIBS)
 
@@ -147,11 +147,11 @@ test_ntt_limits: \
 
 E2E_SRCS := tests/test_full_multiply.cpp $(CPP_SRCS) $(CU_SRCS)
 
-main_32: | $(OBJ_DIR)
+main_32: | $(OBJ_DIR) $(GPU_NTT_LIB)
 	$(NVCC) $(NVCCFLAGS) -DLIMB_BITS=32 $(INCLUDES) $(LIB_PATHS) \
 		$(E2E_SRCS) -o build/test_full_multiply_32 $(LIBS)
 
-main_64: | $(OBJ_DIR)
+main_64: | $(OBJ_DIR) $(GPU_NTT_LIB)
 	$(NVCC) $(NVCCFLAGS) -DLIMB_BITS=64 $(INCLUDES) $(LIB_PATHS) \
 		$(E2E_SRCS) -o build/test_full_multiply_64 $(LIBS)
 
