@@ -70,6 +70,7 @@ INCLUDES := \
     -Iinclude \
     -I$(CUDA_PATH)/include \
     -I$(GPU_NTT_INC) \
+    -I$(GPU_NTT_INC)/gpuntt/common \
     -I$(GPU_NTT_INC)/gpuntt/ntt_merge \
     $(GMP_INCLUDES)
 
