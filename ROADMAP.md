@@ -1,6 +1,8 @@
 # ntt_cgbn — Codebase Roadmap
 
-GPU-accelerated large-integer multiplication via the **Number Theoretic Transform (NTT)** in a **Residue Number System (RNS)**, with **Chinese Remainder Theorem (CRT)** reconstruction and **segmented carry propagation**. Inputs are stored as 32-bit limbs; arithmetic is performed modulo NTT-friendly primes on the GPU.
+GPU-accelerated large-integer multiplication via the **Number Theoretic Transform (NTT)** in a **Residue Number System (RNS)**, with **Chinese Remainder Theorem (CRT)** reconstruction and **segmented carry propagation**.
+
+**Host inputs are always 32-bit limbs** (`uint32_t`), regardless of build width. The compile-time `LIMB_BITS` flag selects NTT arithmetic width, RNS prime count, and **output** limb type — not the host input format.
 
 ---
 
@@ -13,7 +15,8 @@ Large integers `A` and `B` (as limb arrays) are multiplied by treating them as p
         │
         ▼
   ┌─────────────┐
-  │  zero_pad   │  extend each operand to length N (next power of 2)
+  │  zero_pad   │  zero-extend each uint32_t limb to TestDataTypeUint,
+  │             │  then pad to length N (next power of 2 ≥ L_A + L_B − 1)
   └──────┬──────┘
          │  (per modulus, on separate CUDA streams)
          ▼
@@ -77,6 +80,7 @@ ntt_cgbn/
 | `crt.h` | Host-side CRT (2-prime and general Garner) |
 | `crt_gpu.h` | GPU CRT: `CRTGarnerParams`, `crt_combine_gpu` |
 | `crt_utils.h` | Shared helpers: `modinv_u64`, `print_u128` |
+| `ntt_limits.h` | Max supported NTT size and operand limb count for current moduli |
 
 Headers pull in types from the external **GPU-NTT** library (`ntt.cuh`, `modular_arith.cuh`) via include paths in `make/config.mk`.
 
@@ -86,7 +90,7 @@ Headers pull in types from the external **GPU-NTT** library (`ntt.cuh`, `modular
 |------|------|
 | `gpu_ntt.cu` | Core pipeline: NTT precomputation, context allocation, `execute_ntt_multiply`, `pointwise_mul_kernel`, moduli/roots tables |
 | `host_multiply.cpp` | Wraps GPU pipeline for host callers; writes timing CSV |
-| `zero_pad.cu` | `zero_pad_kernel` — copies `L` limbs into length-`N` buffer, zero-fills rest |
+| `zero_pad.cu` | `zero_pad_kernel` — zero-extends `uint32_t` inputs to `TestDataTypeUint`, pads to length `N` |
 | `crt_gpu.cu` | Garner CRT on GPU; constant-memory params; 128-bit coefficient output |
 | `crt.cpp` | Host CRT reference (`crt_combine_2`, `crt_combine_many`) |
 | `crt_utils.cpp` | `modinv_u64` implementation |
@@ -113,9 +117,19 @@ Dual-width E2E: `make main_32`, `make main_64`
 
 | File | Role |
 |------|------|
-| `gpu_ntt_benchmark.cu` | NTT/INTT round-trip benchmark comparing 32- vs 64-bit configs |
+| `gpu_ntt_benchmark.cu` | NTT/INTT round-trip benchmark comparing 32- vs 64-bit NTT configs (GPU-NTT `Data32` vs `Data64`; separate from the E2E multiply path) |
+| `gpu_full_multiply_benchmark.cpp` | End-to-end multiply benchmark: times `execute_ntt_multiply` only (precompute and allocation outside the timed region); sweeps operand limb counts; writes CSV |
 
-Build: `make bench` → `bench_ntt`
+Build targets (`make/bench.mk`):
+
+| Target | Binary | Notes |
+|--------|--------|-------|
+| `make bench` | `build/bench_ntt` | NTT round-trip only |
+| `make bench_full_32` | `build/bench_full_multiply_32` | Full pipeline, `LIMB_BITS=32`, 3-prime RNS |
+| `make bench_full_64` | `build/bench_full_multiply_64` | Full pipeline, `LIMB_BITS=64`, 2-prime RNS |
+| `make bench_full` | both of the above | |
+
+The full-multiply benchmark accepts `--warmup N`, `--iters N`, `--csv FILE`, `--append`, and limb specs (`L` values `< 64` mean `1<<L` limbs; ranges like `16-24` are inclusive). Output CSV columns: `limb_bits,L_arg,L,N,logN,warmup,iters,mean_ms,stddev_ms,min_ms,max_ms`.
 
 ### `make/` — build system
 
@@ -137,6 +151,8 @@ Build: `make bench` → `bench_ntt`
 | `carry.py` | Carry propagation reference |
 | `full_mul.py`, `gpu_ntt_verify.py` | End-to-end verification against Python reference |
 | `rng.py` | Generate random limb pairs → binary input for `main` |
+| `run_gpu_bench.py` | Build and run `bench_full_multiply_{32,64}`; `--limb-bits 32\|64\|both` |
+| `plot_bench.py` | Plot `gpu_multiply_bench.csv` (log-log, error bars) → PNG |
 
 ---
 
@@ -160,10 +176,22 @@ Moduli and 2²³-th roots of unity are hardcoded in `gpu_ntt.cu` and derived at 
 
 Set at compile time via `-DLIMB_BITS=32|64` (default 32 in `config.h`):
 
-| `LIMB_BITS` | Output limb type | `NUM_MODULI` | Typical use |
-|-------------|------------------|--------------|-------------|
-| 32 | `uint32_t` | 3 | Default; wider CRT product per coefficient |
-| 64 | `uint64_t` | 2 | Fewer moduli; 62-bit NTT primes |
+| `LIMB_BITS` | NTT type (`gpu_ntt.cu`) | Output limb type | `NUM_MODULI` | RNS primes (`gpu_ntt.cu`) |
+|-------------|-------------------------|------------------|--------------|---------------------------|
+| 32 | `Data32` | `uint32_t` | 3 | `0x2d000001`, `0x23800001`, `0x26800001` |
+| 64 | `Data64` | `uint64_t` | 2 | `0x6723cbb800001`, `0x6723cb6800001` (62-bit NTT-friendly) |
+
+### Input vs output limb width
+
+| Stage | Width |
+|-------|-------|
+| Host input (`main`, benchmarks, `execute_ntt_multiply`) | Always `uint32_t` limbs |
+| After `zero_pad_kernel` (`src/zero_pad.cu`) | `TestDataTypeUint` — zero-extended cast: upper 32 bits are 0 in 64-bit builds |
+| After carry propagation | `TestDataTypeUint` output limbs (`uint32_t` or `uint64_t` per `LIMB_BITS`) |
+
+The **64-bit build** therefore uses a **2-prime RNS** with **32-bit input limbs widened to 64 bits** before NTT. This is intentional: operand size is expressed in 32-bit host limbs while NTT/CRT arithmetic runs at 64-bit width with fewer, larger primes. Verified by `tests/test_zero_pad.cu` (`test_no_upper_bits_set`).
+
+`NTTContext` stores raw inputs as `uint32_t*` (`a_raw_dev` / `b_raw_dev`); per-modulus padded buffers `a_dev[i]` / `b_dev[i]` are `TestDataType*`.
 
 Other defines:
 
@@ -196,10 +224,26 @@ After INTT, `c_dev[i]` holds residues modulo `moduli[i]` for all `N` coefficient
 make                  # build main
 make clean
 make test             # all tests
-make bench            # NTT benchmark
+make bench            # NTT round-trip benchmark (build/bench_ntt)
+make bench_full       # end-to-end multiply benchmarks (32- and 64-bit)
+make bench_full_32    # build/bench_full_multiply_32 only
+make bench_full_64    # build/bench_full_multiply_64 only
 make DEBUG=1 test     # tests with debug checks
 make TIMING=1         # timing instrumentation in gpu_ntt.cu
 ```
+
+**Full-multiply benchmark** (times `execute_ntt_multiply` only):
+
+```bash
+make bench_full_64
+./build/bench_full_multiply_64 --warmup 2 --iters 20 --csv gpu_multiply_bench.csv 16-22
+
+# or via runner (builds if needed; use --append for the second width)
+python scripts/run_gpu_bench.py --limb-bits both 16-22 --iters 20
+python scripts/plot_bench.py gpu_multiply_bench.csv -o gpu_multiply_bench.png
+```
+
+Operand sizes are capped by `ntt_limits.h` (`max_supported_limb_count()`, `max_supported_logN()`); unsupported `L` values are skipped with a message.
 
 `main` usage (host driver; multiply calls currently commented out):
 
@@ -242,6 +286,7 @@ Based on recent commit history and in-code TODOs:
 - [x] Segmented carry propagation (intra / inter / fixup)
 - [x] GPU CRT with Garner precomputation in constant memory
 - [x] Dual-stream NTT for operands A and B
+- [x] End-to-end multiply benchmarks (`bench_full_multiply_{32,64}`) with CSV output and plotting (`run_gpu_bench.py`, `plot_bench.py`)
 
 ### In progress / known gaps
 
@@ -254,10 +299,9 @@ Based on recent commit history and in-code TODOs:
 
 1. **Productionize pointwise mul** — Barrett or library modular multiply for 32/64-bit limbs
 2. **Reconnect `main.cpp`** — enable `merge` path and optional file I/O for manual testing
-3. **Benchmark suite** — extend `bench/` to cover full multiply (not just NTT round-trip) at scale
-4. **Parameter tooling** — promote `scripts/find_prim_roots.py` output into generated headers for new prime sets
-5. **64-bit scaling** — validate larger `N` and limb counts; profile CRT and carry stages vs NTT
-6. **CI / reproducibility** — document exact GPU-NTT and GMP install steps; pin moduli in a single config source
+3. **Parameter tooling** — promote `scripts/find_prim_roots.py` output into generated headers for new prime sets
+4. **64-bit scaling** — use `bench_full_64` to profile larger `N` and limb counts; compare CRT/carry vs NTT (`TIMING=1`)
+5. **CI / reproducibility** — document exact GPU-NTT and GMP install steps; pin moduli in a single config source
 
 ---
 
@@ -272,4 +316,7 @@ Based on recent commit history and in-code TODOs:
 | CRT algorithm (GPU) | `src/crt_gpu.cu`, `include/crt_gpu.h` |
 | CRT reference (CPU) | `src/crt.cpp`, `scripts/crt.py` |
 | Add a test | `tests/`, register via wildcard in `make/tests.mk` |
+| Run full-multiply benchmarks | `make bench_full`, `scripts/run_gpu_bench.py` |
+| Plot benchmark results | `scripts/plot_bench.py` |
+| Check max operand size | `include/ntt_limits.h`, `src/ntt_limits.cpp` |
 | Build flags / deps | `make/config.mk` |
