@@ -102,14 +102,63 @@ void test_large_N() {
     check("large N (L=2^20, N=2^23)", ok);
 }
 
+#if defined(NATIVE_HOST_LIMBS)
+
+static constexpr TestDataTypeUint kTestModulus = 0x400002600000001ULL;
+
+std::vector<TestDataTypeUint> run_u64(const std::vector<uint64_t>& src, size_t N,
+                                      TestDataTypeUint modulus) {
+    size_t L = src.size();
+    uint64_t* d_src;
+    TestDataTypeUint* d_dst;
+    cudaMalloc(&d_src, L * sizeof(uint64_t));
+    cudaMalloc(&d_dst, N * sizeof(TestDataTypeUint));
+    cudaMemcpy(d_src, src.data(), L * sizeof(uint64_t), cudaMemcpyHostToDevice);
+    zero_pad_gpu_u64(d_src, d_dst, L, N, modulus, 0);
+    cudaDeviceSynchronize();
+    std::vector<TestDataTypeUint> out(N);
+    cudaMemcpy(out.data(), d_dst, N * sizeof(TestDataTypeUint), cudaMemcpyDeviceToHost);
+    cudaFree(d_src);
+    cudaFree(d_dst);
+    return out;
+}
+
+void test_u64_mod_pad() {
+    const TestDataTypeUint p = kTestModulus;
+    std::vector<uint64_t> src = {42, 1ULL << 40, UINT64_MAX};
+    auto out = run_u64(src, 8, p);
+    bool ok = true;
+    for (size_t i = 0; i < 3; i++)
+        ok &= (out[i] == (TestDataTypeUint)(src[i] % p));
+    for (size_t i = 3; i < 8; i++) ok &= (out[i] == 0);
+    check("u64 mod-p pad", ok);
+}
+
+void test_u64_full_range_reduced() {
+    const TestDataTypeUint p = kTestModulus;
+    std::vector<uint64_t> src = {UINT64_MAX, UINT64_MAX - 1, 1};
+    auto out = run_u64(src, 4, p);
+    bool ok = true;
+    for (size_t i = 0; i < 3; i++)
+        ok &= (out[i] == (TestDataTypeUint)(src[i] % p));
+    check("u64 full-range limbs reduced mod p", ok);
+}
+
+#endif
+
 int main() {
     printf("=== zero_pad tests (LIMB_BITS=%d) ===\n", LIMB_BITS);
+#if defined(NATIVE_HOST_LIMBS)
+    test_u64_mod_pad();
+    test_u64_full_range_reduced();
+#else
     test_normal_pad();
     test_noop_pad();
     test_single_element();
     test_zeros_in_source_preserved();
     test_no_upper_bits_set();
     test_large_N();
+#endif
     printf("\n%d passed, %d failed\n", passed, failed);
     return failed > 0 ? 1 : 0;
 }

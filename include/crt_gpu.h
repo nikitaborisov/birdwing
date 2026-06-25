@@ -27,7 +27,16 @@ void upload_residue_ptrs(const vector<TestDataTypeUint*> &c_dev);
 // residues layout: [NUM_MODULI][N] (row = modulus, col = coefficient index)
 // Output C_hi, C_lo: each coefficient x = (C_hi[i] << 64) | C_lo[i]
 void crt_combine_gpu(
-    uint64_t *d_C_hi,   // pre-allocated device output
+    uint64_t *d_C_hi,
     uint64_t *d_C_lo,
     int N
 );
+
+#if defined(NATIVE_HOST_LIMBS)
+// U160 output: x = lo | (mid << 64) | ((uint64_t)hi << 128)
+void crt_combine_gpu_u160(
+    uint64_t *d_C_lo,
+    uint64_t *d_C_mid,
+    uint32_t *d_C_hi,
+    int N);
+#endif

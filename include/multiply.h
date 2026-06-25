@@ -4,10 +4,20 @@
 #include <chrono>
 #include "config.h"
 
-using limb_t = TestDataTypeUint;
+using limb_t = OutputLimbType;
 
-// Multiply two large integers represented as base-2^30 limbs.
-void host_multiply_merge(const vector<uint32_t> &A, // changed from limb_t to uint32_t
-                         const vector<uint32_t> &B, // changed from limb_t to uint32_t
-                         vector<TestDataTypeUint> &C, // changed from limb_t to TestDataTypeUint
+#if !defined(NATIVE_HOST_LIMBS)
+// 32-bit and hybrid pipelines (uint32_t host limbs)
+void host_multiply_merge(const vector<uint32_t> &A,
+                         const vector<uint32_t> &B,
+                         vector<OutputLimbType> &C,
                          chrono::duration<double, milli> &duration);
+#endif
+
+#if defined(NATIVE_HOST_LIMBS)
+// 64-bit pipeline (uint64_t host limbs)
+void host_multiply_merge_native(const vector<uint64_t> &A,
+                                const vector<uint64_t> &B,
+                                vector<uint64_t> &C,
+                                chrono::duration<double, milli> &duration);
+#endif

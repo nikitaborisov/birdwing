@@ -264,17 +264,251 @@ void test_against_host_reference(const CRTGarnerParams& garner) {
     check("GPU matches host reference (N=64)", ok);
 }
 
+#if defined(NATIVE_HOST_LIMBS)
+
+#include "wide_int.h"
+
+struct CRTResult160 { uint64_t lo, mid; uint32_t hi; };
+
+static uint64_t host_modinv(uint64_t a, uint64_t m) {
+    int64_t old_r = a, r = m;
+    int64_t old_s = 1, s = 0;
+    while (r != 0) {
+        int64_t q = old_r / r;
+        int64_t tmp = r; r = old_r - q * r; old_r = tmp;
+        tmp = s; s = old_s - q * s; old_s = tmp;
+    }
+    return (uint64_t)((old_s % (int64_t)m + m) % m);
+}
+
+static uint64_t host_mulmod(uint64_t a, uint64_t b, uint64_t p) {
+    return (uint64_t)(((unsigned __int128)a * b) % p);
+}
+
+U160 host_crt_reference_u160(const vector<uint64_t>& residues,
+                             const vector<uint64_t>& primes) {
+    U160 x{0, 0, 0};
+    uint64_t M_hi = 0, M_lo = 1;
+    uint64_t x_mod[NUM_MODULI] = {};
+
+    for (int j = 0; j < NUM_MODULI; j++) {
+        uint64_t p   = primes[j];
+        uint64_t r   = residues[j];
+        unsigned __int128 Mprefix = ((unsigned __int128)M_hi << 64) | M_lo;
+        uint64_t inv = (j == 0) ? 1ULL : host_modinv((uint64_t)(Mprefix % p), p);
+
+        uint64_t x_mod_p = x_mod[j];
+        uint64_t t = (r >= x_mod_p) ? (r - x_mod_p) : (r + p - x_mod_p);
+        uint64_t k_j = host_mulmod(t, inv, p);
+
+        for (int k = j + 1; k < NUM_MODULI; k++) {
+            uint64_t pk = primes[k];
+            uint64_t contrib = host_mulmod((uint64_t)(Mprefix % pk), k_j, pk);
+            x_mod[k] += contrib;
+            if (x_mod[k] >= pk) x_mod[k] -= pk;
+        }
+
+        uint64_t tmp_lo, tmp_mid;
+        uint32_t tmp_hi;
+        mul128x64_host(M_hi, M_lo, k_j, tmp_lo, tmp_mid, tmp_hi);
+        add160_host(x, tmp_lo, tmp_mid, tmp_hi);
+
+        unsigned __int128 Mfull = ((unsigned __int128)M_hi << 64) | M_lo;
+        Mfull *= p;
+        M_lo = (uint64_t)Mfull;
+        M_hi = (uint64_t)(Mfull >> 64);
+    }
+    return x;
+}
+
+static void u160_from_scalar(uint64_t v, U160& out) {
+    out.lo = v;
+    out.mid = 0;
+    out.hi = 0;
+}
+
+static bool u160_eq_scalar(const U160& a, uint64_t v) {
+    U160 b;
+    u160_from_scalar(v, b);
+    return u160_eq(a, b);
+}
+
+vector<CRTResult160> run_crt_u160(
+    const CRTGarnerParams& garner,
+    const vector<vector<uint64_t>>& residues_per_modulus,
+    int N)
+{
+    vector<TestDataTypeUint*> c_dev(NUM_MODULI);
+    for (int j = 0; j < NUM_MODULI; j++) {
+        cudaMalloc(&c_dev[j], N * sizeof(TestDataTypeUint));
+        vector<TestDataTypeUint> tmp(N);
+        for (int i = 0; i < N; i++)
+            tmp[i] = (TestDataTypeUint)residues_per_modulus[j][i];
+        cudaMemcpy(c_dev[j], tmp.data(), N * sizeof(TestDataTypeUint),
+                   cudaMemcpyHostToDevice);
+    }
+
+    upload_garner_params(garner);
+    upload_residue_ptrs(c_dev);
+
+    uint64_t *d_C_lo, *d_C_mid;
+    uint32_t *d_C_hi;
+    cudaMalloc(&d_C_lo, N * sizeof(uint64_t));
+    cudaMalloc(&d_C_mid, N * sizeof(uint64_t));
+    cudaMalloc(&d_C_hi, N * sizeof(uint32_t));
+
+    crt_combine_gpu_u160(d_C_lo, d_C_mid, d_C_hi, N);
+
+    vector<uint64_t> h_lo(N), h_mid(N);
+    vector<uint32_t> h_hi(N);
+    cudaMemcpy(h_lo.data(), d_C_lo, N * sizeof(uint64_t), cudaMemcpyDeviceToHost);
+    cudaMemcpy(h_mid.data(), d_C_mid, N * sizeof(uint64_t), cudaMemcpyDeviceToHost);
+    cudaMemcpy(h_hi.data(), d_C_hi, N * sizeof(uint32_t), cudaMemcpyDeviceToHost);
+
+    for (int j = 0; j < NUM_MODULI; j++) cudaFree(c_dev[j]);
+    cudaFree(d_C_lo);
+    cudaFree(d_C_mid);
+    cudaFree(d_C_hi);
+
+    vector<CRTResult160> out(N);
+    for (int i = 0; i < N; i++)
+        out[i] = {h_lo[i], h_mid[i], h_hi[i]};
+    return out;
+}
+
+static vector<vector<uint64_t>> residues_for_x(const CRTGarnerParams& garner,
+                                               uint64_t x, int N) {
+    vector<vector<uint64_t>> residues(NUM_MODULI, vector<uint64_t>(N));
+    for (int j = 0; j < NUM_MODULI; j++)
+        for (int i = 0; i < N; i++)
+            residues[j][i] = x % garner.primes[j];
+    return residues;
+}
+
+static uint64_t u160_mod_p(const U160& val, uint64_t p) {
+    uint64_t pow2_64 = (uint64_t)(((unsigned __int128)1 << 64) % p);
+    uint64_t pow2_128 = (uint64_t)(((unsigned __int128)pow2_64 * pow2_64) % p);
+    unsigned __int128 acc = (unsigned __int128)val.lo % p;
+    acc = (acc + ((__uint128_t)(val.mid % p) * pow2_64) % p) % p;
+    acc = (acc + ((__uint128_t)(val.hi % p) * pow2_128) % p) % p;
+    return (uint64_t)acc;
+}
+
+static void residues_for_u160(const CRTGarnerParams& garner, const U160& val,
+                              vector<vector<uint64_t>>& residues, int idx) {
+    for (int j = 0; j < NUM_MODULI; j++)
+        residues[j][idx] = u160_mod_p(val, garner.primes[j]);
+}
+
+void test_u160_zero(const CRTGarnerParams& garner) {
+    int N = 4;
+    vector<vector<uint64_t>> residues(NUM_MODULI, vector<uint64_t>(N, 0));
+    auto out = run_crt_u160(garner, residues, N);
+    bool ok = true;
+    for (int i = 0; i < N; i++)
+        ok &= (out[i].lo == 0 && out[i].mid == 0 && out[i].hi == 0);
+    check("u160 all zeros", ok);
+}
+
+void test_u160_single(const CRTGarnerParams& garner) {
+    auto residues = residues_for_x(garner, 12, 1);
+    auto out = run_crt_u160(garner, residues, 1);
+    U160 got{out[0].lo, out[0].mid, out[0].hi};
+    check("u160 single known value (x=12)", u160_eq_scalar(got, 12));
+}
+
+void test_u160_multiple(const CRTGarnerParams& garner) {
+    vector<uint64_t> values = {0, 1, 12, UINT64_MAX,
+                               (uint64_t)0xFFFFFFFFFFFFFFFFULL,
+                               (uint64_t)((1ULL << 63) - 1)};
+    int N = (int)values.size();
+    vector<vector<uint64_t>> residues(NUM_MODULI, vector<uint64_t>(N));
+    for (int i = 0; i < N; i++) {
+        U160 v;
+        u160_from_scalar(values[i], v);
+        residues_for_u160(garner, v, residues, i);
+    }
+    auto out = run_crt_u160(garner, residues, N);
+    bool ok = true;
+    for (int i = 0; i < N; i++) {
+        U160 got{out[i].lo, out[i].mid, out[i].hi};
+        ok &= u160_eq_scalar(got, values[i]);
+    }
+    check("u160 multiple coefficients batch", ok);
+}
+
+void test_u160_host_reference(const CRTGarnerParams& garner) {
+    int N = 64;
+    vector<uint64_t> primes_vec(garner.primes, garner.primes + NUM_MODULI);
+    vector<vector<uint64_t>> residues(NUM_MODULI, vector<uint64_t>(N));
+    for (int j = 0; j < NUM_MODULI; j++)
+        for (int i = 0; i < N; i++)
+            residues[j][i] = ((uint64_t)(i * 7 + j * 13 + 1)) % garner.primes[j];
+
+    auto out = run_crt_u160(garner, residues, N);
+    bool ok = true;
+    for (int i = 0; i < N; i++) {
+        vector<uint64_t> res_i(NUM_MODULI);
+        for (int j = 0; j < NUM_MODULI; j++) res_i[j] = residues[j][i];
+        U160 expected = host_crt_reference_u160(res_i, primes_vec);
+        U160 got{out[i].lo, out[i].mid, out[i].hi};
+        ok &= u160_eq(got, expected);
+    }
+    check("u160 GPU matches host reference (N=64)", ok);
+}
+
+void test_u160_128bit_boundary(const CRTGarnerParams& garner) {
+    U160 val{(uint64_t)0, (uint64_t)1, 0};
+    vector<vector<uint64_t>> residues(NUM_MODULI, vector<uint64_t>(1));
+    residues_for_u160(garner, val, residues, 0);
+    auto out = run_crt_u160(garner, residues, 1);
+    U160 got{out[0].lo, out[0].mid, out[0].hi};
+    check("u160 128-bit boundary (2^128)", u160_eq(got, val));
+}
+
+void test_u160_160bit_max(const CRTGarnerParams& garner) {
+    U160 val{UINT64_MAX, UINT64_MAX, UINT32_MAX};
+    vector<vector<uint64_t>> residues(NUM_MODULI, vector<uint64_t>(1));
+    residues_for_u160(garner, val, residues, 0);
+    auto out = run_crt_u160(garner, residues, 1);
+    U160 got{out[0].lo, out[0].mid, out[0].hi};
+    check("u160 max (2^160-1)", u160_eq(got, val));
+}
+
+void test_u160_159bit_stress(const CRTGarnerParams& garner) {
+    U160 val{12345ULL, 0, (uint32_t)(1U << 31)};
+    vector<vector<uint64_t>> residues(NUM_MODULI, vector<uint64_t>(1));
+    residues_for_u160(garner, val, residues, 0);
+    auto out = run_crt_u160(garner, residues, 1);
+    U160 got{out[0].lo, out[0].mid, out[0].hi};
+    check("u160 159-bit stress", u160_eq(got, val));
+}
+
+#endif // NATIVE_HOST_LIMBS
+
 int main() {
     printf("=== crt_gpu tests (LIMB_BITS=%d) ===\n", LIMB_BITS);
 
-    // Use your actual moduli from config
+#if defined(NATIVE_HOST_LIMBS)
+    vector<TestDataTypeUint> moduli_vec = {
+        0x400002600000001ULL,
+        0x400004200000001ULL,
+        0x400001100000001ULL,
+    };
+    CRTGarnerParams garner = compute_garner_params(moduli_vec);
+
+    test_u160_zero(garner);
+    test_u160_single(garner);
+    test_u160_multiple(garner);
+    test_u160_host_reference(garner);
+    test_u160_128bit_boundary(garner);
+    test_u160_160bit_max(garner);
+    test_u160_159bit_stress(garner);
+#else
     #if LIMB_BITS == 64
-    // 62-bit NTT-friendly primes: p = k * 2^M + 1, M >= 23
-    vector<TestDataTypeUint> moduli_vec = {0x6723cbb800001, 0x6723cb6800001};
-    vector<TestDataTypeUint> roots_of_unity_2_23 = {11, 6};
+    vector<TestDataTypeUint> moduli_vec = {0x400002600000001ULL, 0x400004200000001ULL};
     #else
     vector<TestDataTypeUint> moduli_vec = {0x23800001, 0x26800001, 0x2d000001};
-    vector<TestDataTypeUint> roots_of_unity_2_23 = {663, 721, 19};
     #endif
     CRTGarnerParams garner = compute_garner_params(moduli_vec);
 
@@ -284,6 +518,7 @@ int main() {
     test_large_value(garner);
     test_multiple_coefficients(garner);
     test_against_host_reference(garner);
+#endif
 
     printf("\n%d passed, %d failed\n", passed, failed);
     return failed > 0 ? 1 : 0;

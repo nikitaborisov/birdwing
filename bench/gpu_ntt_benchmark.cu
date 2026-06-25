@@ -50,8 +50,8 @@ static vector<U32> roots_32  = {663};  // primitive 2^23-rd roots
 using D64 = Data64;
 using U64 = uint64_t;
 
-static vector<U64> moduli_64 = {288547035500511233};
-static vector<U64> roots_64 = {240676858840140095};
+static vector<U64> moduli_64 = {288230539360468993ULL};
+static vector<U64> roots_64  = {273765203699653965ULL};
 
 // ---------------------------------------------------------------------------
 // Helpers

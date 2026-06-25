@@ -12,6 +12,10 @@ int main() {
     NTTPrecomputed pre = precompute_ntt(N);
     printf("  OK: N=%zu logN=%d\n", pre.N, pre.logN);
 
+    printf("upload_ntt_precomputed...\n");
+    upload_ntt_precomputed(pre);
+    printf("  OK\n");
+
     printf("allocate_ntt_context...\n");
     NTTContext ctx = allocate_ntt_context(pre, N/2, N/2);
     printf("  OK\n");

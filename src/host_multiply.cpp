@@ -1,5 +1,6 @@
 #include "../include/gpu_ntt.h"
 #include "../include/multiply.h"
+#include "../include/ntt_limits.h"
 #include "../include/crt.h"
 #include "../include/crt_utils.h"
 #include "../include/crt_gpu.h"
@@ -19,10 +20,11 @@
 using namespace std;
 
 // parameters
-using limb_t = TestDataTypeUint; // each limb is stored in 32-bit containers
 
 // host functions
-void host_multiply_merge(const vector<uint32_t> &A, const vector<uint32_t> &B, vector<TestDataTypeUint> &C, chrono::duration<double, milli> &duration) {
+#if !defined(NATIVE_HOST_LIMBS)
+
+void host_multiply_merge(const vector<uint32_t> &A, const vector<uint32_t> &B, vector<OutputLimbType> &C, chrono::duration<double, milli> &duration) {
     size_t L_A = A.size();
     size_t L_B = B.size();
     size_t L_C = L_A + L_B - 1;
@@ -31,6 +33,8 @@ void host_multiply_merge(const vector<uint32_t> &A, const vector<uint32_t> &B, v
     while (N < L_C)
         N <<= 1;
 
+    ensure_multiply_size_supported(L_A, L_B);
+
     uint32_t* a_pinned;
     uint32_t* b_pinned;
     cudaMallocHost(&a_pinned, L_A * sizeof(uint32_t));
@@ -38,20 +42,16 @@ void host_multiply_merge(const vector<uint32_t> &A, const vector<uint32_t> &B, v
     memcpy(a_pinned, A.data(), L_A * sizeof(uint32_t));
     memcpy(b_pinned, B.data(), L_B * sizeof(uint32_t));
 
-    vector<TestDataTypeUint> C_out(N + 1, 0);
+    vector<OutputLimbType> C_out(N + 1, 0);
 
     C.resize(L_C + 1, 0);
 
-    unsigned __int128 M = 1;
-    for (int j = 0; j < NUM_MODULI; j++) M *= moduli[j];
-    __int128 M_half = M >> 1;
-
-    // also compute M/2
     NTTPrecomputed pre = precompute_ntt(N);
 
     auto t0 = chrono::high_resolution_clock::now();
+    upload_ntt_precomputed(pre);
     NTTContext ctx = allocate_ntt_context(pre, L_A, L_B);
-    execute_ntt_multiply(ctx, a_pinned, b_pinned, C_out, M, M_half);
+    execute_ntt_multiply(ctx, a_pinned, b_pinned, C_out);
     auto t1 = chrono::high_resolution_clock::now();
 
     for (size_t i = 0; i <= L_C; i++)
@@ -84,3 +84,53 @@ void host_multiply_merge(const vector<uint32_t> &A, const vector<uint32_t> &B, v
 
     duration = t2 - t0;
 }
+
+#endif // !NATIVE_HOST_LIMBS
+
+#if defined(NATIVE_HOST_LIMBS)
+
+void host_multiply_merge_native(const vector<uint64_t> &A, const vector<uint64_t> &B,
+                                vector<uint64_t> &C,
+                                chrono::duration<double, milli> &duration) {
+    size_t L_A = A.size();
+    size_t L_B = B.size();
+    size_t L_C = L_A + L_B - 1;
+
+    size_t N = 1;
+    while (N < L_C)
+        N <<= 1;
+
+    ensure_multiply_size_supported(L_A, L_B);
+
+    uint64_t* a_pinned;
+    uint64_t* b_pinned;
+    cudaMallocHost(&a_pinned, L_A * sizeof(uint64_t));
+    cudaMallocHost(&b_pinned, L_B * sizeof(uint64_t));
+    memcpy(a_pinned, A.data(), L_A * sizeof(uint64_t));
+    memcpy(b_pinned, B.data(), L_B * sizeof(uint64_t));
+
+    vector<uint64_t> C_out(N + 1, 0);
+    C.resize(L_C + 1, 0);
+
+    NTTPrecomputed pre = precompute_ntt(N);
+
+    auto t0 = chrono::high_resolution_clock::now();
+    upload_ntt_precomputed(pre);
+    NTTContext ctx = allocate_ntt_context(pre, L_A, L_B);
+    execute_ntt_multiply(ctx, a_pinned, b_pinned, C_out);
+    auto t1 = chrono::high_resolution_clock::now();
+
+    for (size_t i = 0; i <= L_C; i++)
+        C[i] = C_out[i];
+
+    cleanup_ntt_context(ctx);
+    auto t2 = chrono::high_resolution_clock::now();
+    cleanup_ntt_precomputed(pre);
+    cudaFreeHost(a_pinned);
+    cudaFreeHost(b_pinned);
+
+    (void)t1;
+    duration = t2 - t0;
+}
+
+#endif

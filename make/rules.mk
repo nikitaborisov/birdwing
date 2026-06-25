@@ -2,7 +2,7 @@
 # Default target
 # ================================================================
 
-all: $(TARGET)
+all: gpu-ntt $(TARGET)
 
 # ================================================================
 # Directory creation
@@ -34,9 +34,9 @@ $(MAIN_OBJ): $(MAIN_SRC) | $(OBJ_DIR)
 # Main executable
 # ================================================================
 
-$(TARGET): $(OBJS)
+$(TARGET): $(OBJS) | $(GPU_NTT_LIB)
 	$(NVCC) $(NVCCFLAGS) $(INCLUDES) $(LIB_PATHS) \
-		-o $@ $^ $(LIBS)
+		-o $@ $(OBJS) $(LIBS)
 
 # ================================================================
 # Cleanup

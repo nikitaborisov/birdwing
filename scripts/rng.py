@@ -4,31 +4,55 @@ import struct
 
 # Example usage:
 # python rng.py --limbs 64 --output input.bin
-# This generates two random numbers, each with 64 32-bit limbs, and writes them to input.bin in binary format.
+# python rng.py --limbs 64 --limb-bits 64 --output input_64bit.bin
+# Generates two random numbers and writes them to input.bin in binary format.
 
-def generate_limb_array(num_limbs):
-    """Generate an array of random 32-bit integers (limbs)."""
+
+def generate_limb_array(num_limbs, limb_bits):
+    """Generate an array of random limbs (32- or 64-bit)."""
+    if limb_bits == 64:
+        return [secrets.randbits(64) for _ in range(num_limbs)]
     return [secrets.randbits(32) for _ in range(num_limbs)]
 
-def write_limb_array(filename, limbs_a, limbs_b):
+
+def write_limb_array(filename, limbs_a, limbs_b, limb_bits):
     """Write two limb arrays to a binary file: a followed by b."""
+    pack = struct.Struct("<Q") if limb_bits == 64 else struct.Struct("<I")
     with open(filename, "wb") as f:
         for limb in limbs_a:
-            f.write(struct.pack("<I", limb))  # little-endian 32-bit
+            f.write(pack.pack(limb))
         for limb in limbs_b:
-            f.write(struct.pack("<I", limb))
+            f.write(pack.pack(limb))
+
 
 def main():
-    parser = argparse.ArgumentParser(description="Generate two random numbers as 32-bit limb arrays")
-    parser.add_argument("--limbs", type=int, default=32, help="Number of 32-bit limbs per number")
-    parser.add_argument("--output", type=str, default="bigints.bin", help="Output binary file")
+    parser = argparse.ArgumentParser(
+        description="Generate two random big integers as limb arrays"
+    )
+    parser.add_argument(
+        "--limbs", type=int, default=32, help="Number of limbs per number"
+    )
+    parser.add_argument(
+        "--limb-bits",
+        type=int,
+        choices=(32, 64),
+        default=32,
+        help="Width of each limb in bits (default: 32)",
+    )
+    parser.add_argument(
+        "--output", type=str, default="bigints.bin", help="Output binary file"
+    )
     args = parser.parse_args()
 
-    limbs_a = generate_limb_array(args.limbs)
-    limbs_b = generate_limb_array(args.limbs)
+    limbs_a = generate_limb_array(args.limbs, args.limb_bits)
+    limbs_b = generate_limb_array(args.limbs, args.limb_bits)
 
-    write_limb_array(args.output, limbs_a, limbs_b)
-    print(f"Two random numbers ({args.limbs} limbs each) written to {args.output} in binary format.")
+    write_limb_array(args.output, limbs_a, limbs_b, args.limb_bits)
+    print(
+        f"Two random numbers ({args.limbs} x {args.limb_bits}-bit limbs each) "
+        f"written to {args.output}."
+    )
+
 
 if __name__ == "__main__":
     main()

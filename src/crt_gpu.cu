@@ -202,6 +202,93 @@ void crt_combine_kernel(uint64_t* __restrict__ C_hi, uint64_t* __restrict__ C_lo
     C_lo[i] = x_lo;
 }
 
+#if defined(NATIVE_HOST_LIMBS)
+
+__device__ __forceinline__
+void add160_dev(uint64_t& lo, uint64_t& mid, uint32_t& hi,
+                uint64_t b_lo, uint64_t b_mid, uint32_t b_hi) {
+    uint64_t old = lo;
+    lo += b_lo;
+    uint64_t c = lo < old ? 1ULL : 0ULL;
+
+    old = mid;
+    mid += b_mid + c;
+    c = (mid < old || (c && mid == old)) ? 1ULL : 0ULL;
+
+    hi += b_hi + (uint32_t)c;
+}
+
+__device__ __forceinline__
+void mul128x64_dev(uint64_t M_hi, uint64_t M_lo, uint64_t k,
+                   uint64_t& out_lo, uint64_t& out_mid, uint32_t& out_hi) {
+    unsigned __int128 p0 = (unsigned __int128)M_lo * k;
+    unsigned __int128 p1 = (unsigned __int128)M_hi * k + (uint64_t)(p0 >> 64);
+    out_lo  = (uint64_t)p0;
+    out_mid = (uint64_t)p1;
+    out_hi  = (uint32_t)(p1 >> 64);
+}
+
+__global__
+void crt_combine_kernel_u160(
+    uint64_t* __restrict__ C_lo,
+    uint64_t* __restrict__ C_mid,
+    uint32_t* __restrict__ C_hi,
+    int N)
+{
+    int i = blockIdx.x * blockDim.x + threadIdx.x;
+    if (i >= N) return;
+
+    uint64_t x_lo = 0, x_mid = 0;
+    uint32_t x_hi = 0;
+    uint64_t M_hi = 0, M_lo = 1;
+
+    uint64_t x_mod[NUM_MODULI] = {};
+
+    #pragma unroll
+    for (int j = 0; j < NUM_MODULI; j++) {
+        uint64_t p   = d_primes[j];
+        uint64_t r   = (uint64_t)d_residue_ptrs[j][i];
+        uint64_t inv = d_inv[j];
+
+        uint64_t x_mod_p = x_mod[j];
+        uint64_t t = (r >= x_mod_p) ? (r - x_mod_p) : (r + p - x_mod_p);
+        uint64_t k_i = mulmod64(t, inv, p, d_barrett_m[j]);
+
+        #pragma unroll
+        for (int k = j + 1; k < NUM_MODULI; k++) {
+            uint64_t pk      = d_primes[k];
+            uint64_t contrib = mulmod64(d_M_mod_table[j][k], k_i, pk, d_barrett_m[k]);
+            x_mod[k] += contrib;
+            if (x_mod[k] >= pk) x_mod[k] -= pk;
+        }
+
+        uint64_t tmp_lo, tmp_mid;
+        uint32_t tmp_hi;
+        mul128x64_dev(M_hi, M_lo, k_i, tmp_lo, tmp_mid, tmp_hi);
+        add160_dev(x_lo, x_mid, x_hi, tmp_lo, tmp_mid, tmp_hi);
+
+        mul128_scalar(M_hi, M_lo, p);
+    }
+
+    C_lo[i]  = x_lo;
+    C_mid[i] = x_mid;
+    C_hi[i]  = x_hi;
+}
+
+void crt_combine_gpu_u160(
+    uint64_t *d_C_lo,
+    uint64_t *d_C_mid,
+    uint32_t *d_C_hi,
+    int N)
+{
+    int threads = 256;
+    int blocks  = (N + threads - 1) / threads;
+    crt_combine_kernel_u160<<<blocks, threads>>>(d_C_lo, d_C_mid, d_C_hi, N);
+    cudaDeviceSynchronize();
+}
+
+#endif // NATIVE_HOST_LIMBS
+
 // Host to launch CRT kernel
 void crt_combine_gpu(
     uint64_t *d_C_hi,   // pre-allocated device output

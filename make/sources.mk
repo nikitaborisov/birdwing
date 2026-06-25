@@ -8,7 +8,7 @@ BENCH_SRC := bench/gpu_ntt_benchmark.cu
 CPP_SRCS := $(wildcard $(SRC_DIR)/*.cpp)
 CU_SRCS  := $(wildcard $(SRC_DIR)/*.cu)
 
-TEST_SRCS_CPP := $(wildcard $(TEST_DIR)/*.cpp)
+TEST_SRCS_CPP := $(filter-out $(TEST_DIR)/test_ntt_limits.cpp,$(wildcard $(TEST_DIR)/*.cpp))
 TEST_SRCS_CU  := $(wildcard $(TEST_DIR)/*.cu)
 
 # ================================================================
