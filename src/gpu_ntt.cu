@@ -512,8 +512,8 @@ void execute_ntt_multiply(
         zero_pad_gpu_u64(ctx.a_raw_dev, ctx.a_dev[i], ctx.L_A, ctx.N, moduli[i], ctx.stream_a);
         zero_pad_gpu_u64(ctx.b_raw_dev, ctx.b_dev[i], ctx.L_B, ctx.N, moduli[i], ctx.stream_b);
 #else
-        zero_pad_gpu(ctx.a_raw_dev, ctx.a_dev[i], ctx.L_A, ctx.N, ctx.stream_a);
-        zero_pad_gpu(ctx.b_raw_dev, ctx.b_dev[i], ctx.L_B, ctx.N, ctx.stream_b);
+        zero_pad_gpu(ctx.a_raw_dev, ctx.a_dev[i], ctx.L_A, ctx.N, moduli[i], ctx.stream_a);
+        zero_pad_gpu(ctx.b_raw_dev, ctx.b_dev[i], ctx.L_B, ctx.N, moduli[i], ctx.stream_b);
 #endif
 
         #if DEBUG

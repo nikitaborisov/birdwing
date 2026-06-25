@@ -11,6 +11,7 @@
 
 #include "../include/multiply.h"
 #include "../include/config.h"
+#include "../include/ntt_limits.h"
 
 using namespace std;
 
@@ -22,41 +23,6 @@ using namespace std;
 
 #if !defined(NATIVE_HOST_LIMBS)
 
-// ---------------- CPU REFERENCE MULTIPLY ----------------
-// Bigint schoolbook multiply with full carry
-vector<OutputLimbType> cpu_schoolbook_mul(
-    const vector<uint32_t>& A,
-    const vector<uint32_t>& B)
-{
-    size_t n = A.size(), m = B.size();
-    vector<unsigned __int128> tmp(n + m, 0);
-
-    for (size_t i = 0; i < n; i++) {
-        for (size_t j = 0; j < m; j++) {
-            tmp[i + j] += (unsigned __int128)A[i] * B[j];
-        }
-    }
-
-    vector<OutputLimbType> C(tmp.size());
-    unsigned __int128 carry = 0;
-    const unsigned SHIFT = OUTPUT_LIMB_BITS;
-
-    for (size_t i = 0; i < tmp.size(); i++) {
-        tmp[i] += carry;
-        C[i] = (OutputLimbType)(tmp[i] & (((unsigned __int128)1 << SHIFT) - 1));
-        carry = tmp[i] >> SHIFT;
-    }
-
-    while (C.size() > 1 && C.back() == 0)
-        C.pop_back();
-
-    size_t linear_len = A.size() + B.size(); // 2*L-1
-    if (C.size() < linear_len)
-        C.resize(linear_len);
-
-    return C;
-}
-
 // ---------------- RANDOM INPUT GENERATOR ----------------
 vector<uint32_t> random_limbs(size_t n, uint64_t seed)
 {
@@ -64,10 +30,10 @@ vector<uint32_t> random_limbs(size_t n, uint64_t seed)
     vector<uint32_t> v(n);
 
     for (size_t i = 0; i < n; i++) {
-        if (i % 8 == 0) v[i] = 0; // edge case
+        if (i % 8 == 0) v[i] = 0;
         else if (i % 8 == 1) v[i] = 1;
-        // else if (i % 8 == 2) v[i] = numeric_limits<TestDataTypeUint>::max();
-        else v[i] = (uint32_t)rng() % (1ULL << 30);
+        else if (i % 8 == 2) v[i] = UINT32_MAX;
+        else v[i] = (uint32_t)rng();
     }
     return v;
 }
@@ -92,7 +58,7 @@ bool compare_vectors(const vector<OutputLimbType>& A,
             if (mismatch_count < MAX_REPORT) {
                 cout << RED_BOLD << "[MISMATCH] index " << i
                      << " GPU=" << A[i]
-                     << " CPU=" << B[i] << RESET << "\n";
+                     << " GMP=" << B[i] << RESET << "\n";
             }
             mismatch_count++;
             ok = false;
@@ -236,6 +202,86 @@ vector<OutputLimbType> gmp_mul(
     return out;
 }
 
+// ---------------- GMP ORACLE HELPERS ----------------
+void require_gmp_match(const vector<OutputLimbType>& C_gpu,
+                       const vector<uint32_t>& A,
+                       const vector<uint32_t>& B,
+                       const string& label)
+{
+    vector<OutputLimbType> C_gmp = gmp_mul(A, B);
+    bool ok = compare_vectors(C_gpu, C_gmp);
+    cout << (ok ? GREEN_BOLD "[PASS] " : RED_BOLD "[FAIL] ") << label << RESET << "\n";
+    if (!ok)
+        exit(1);
+}
+
+void test_multiply_vs_gmp(const vector<uint32_t>& A,
+                          const vector<uint32_t>& B,
+                          const string& label)
+{
+    vector<OutputLimbType> C_gpu;
+    chrono::duration<double, milli> duration;
+    host_multiply_merge(A, B, C_gpu, duration);
+    require_gmp_match(C_gpu, A, B, label);
+}
+
+void assert_multiply_supported(size_t L, const string& label)
+{
+    string why;
+    if (!multiply_size_supported(L, L, &why)) {
+        cout << RED_BOLD << "[FAIL] expected supported: " << label
+             << " (L=" << L << "): " << why << RESET << "\n";
+        exit(1);
+    }
+    cout << GREEN_BOLD << "[PASS] supported: " << label
+         << " (L=" << L << ")" << RESET << "\n";
+}
+
+void assert_multiply_unsupported(size_t L, const string& label)
+{
+    string why;
+    if (multiply_size_supported(L, L, &why)) {
+        cout << RED_BOLD << "[FAIL] expected unsupported: " << label
+             << " (L=" << L << ")" << RESET << "\n";
+        exit(1);
+    }
+    cout << GREEN_BOLD << "[PASS] unsupported: " << label
+         << " (L=" << L << ")" << RESET << "\n";
+}
+
+// Largest L for which we run a full GPU multiply in the bound regression.
+static constexpr size_t CRT_BOUND_GPU_CAP = size_t(1) << 22;
+
+void test_crt_bound_regression()
+{
+    const size_t Lmax = max_supported_limb_count();
+    cout << YELLOW << "\n[Test] CRT bound regression (Lmax="
+         << Lmax << ")" << RESET << "\n";
+
+    if (Lmax >= 2)
+        assert_multiply_supported(Lmax - 1, "Lmax-1");
+    assert_multiply_supported(Lmax, "Lmax");
+    assert_multiply_unsupported(Lmax + 1, "Lmax+1");
+
+    auto run_gpu_if_feasible = [&](size_t L, const string& tag) {
+        if (L == 0)
+            return;
+        if (L > CRT_BOUND_GPU_CAP) {
+            cout << YELLOW << "[SKIP] GPU multiply at L=" << L
+                 << " (cap " << CRT_BOUND_GPU_CAP << "): " << tag
+                 << RESET << "\n";
+            return;
+        }
+        vector<uint32_t> A = random_limbs(L, 1234 + L);
+        vector<uint32_t> B = random_limbs(L, 5678 + L);
+        test_multiply_vs_gmp(A, B, tag);
+    };
+
+    if (Lmax >= 2)
+        run_gpu_if_feasible(Lmax - 1, "GPU vs GMP at Lmax-1");
+    run_gpu_if_feasible(Lmax, "GPU vs GMP at Lmax");
+}
+
 // ---------------- PIPELINE TEST ----------------
 void test_full_pipeline(size_t L)
 {
@@ -244,64 +290,22 @@ void test_full_pipeline(size_t L)
 
     vector<uint32_t> A = random_limbs(L, 1234);
     vector<uint32_t> B = random_limbs(L, 5678);
-
-    // vector<OutputLimbType> A = {1,2,3,4,5,6,7,8};
-    // vector<OutputLimbType> B = {9,10,11,12,13,14,15,16};
-
-    // vector<uint32_t> A = {1,2,3,4};
-    // vector<uint32_t> B = {5,6,7,8};
-
-    // GPU pipeline
-    vector<OutputLimbType> C_gpu;
-    chrono::duration<double, milli> duration;
-    host_multiply_merge(A, B, C_gpu, duration);
-
-    // CPU reference
-    vector<OutputLimbType> C_cpu = cpu_schoolbook_mul(A, B);
-
-    // Compare
-    bool ok = compare_vectors(C_gpu, C_cpu);
-
-    if (ok)
-        cout << GREEN_BOLD << "[PASS] Full pipeline correct\n" << RESET;
-    else
-        cout << RED_BOLD << "[FAIL] Pipeline incorrect\n" << RESET;
+    test_multiply_vs_gmp(A, B, "full pipeline L=" + to_string(L));
 }
 
 void test_simple() {
-    chrono::duration<double, milli> dur;
-    bool all_ok = true;
-    auto check = [&](const vector<uint32_t>& A,
-                     const vector<uint32_t>& B,
-                     const string& label) {
-        vector<OutputLimbType> C_gpu, C_ref;
-        host_multiply_merge(A, B, C_gpu, dur);
-        C_ref = cpu_schoolbook_mul(A, B);
-        bool ok = compare_vectors(C_gpu, C_ref);
-        cout << (ok ? GREEN_BOLD "[PASS] " : RED_BOLD "[FAIL] ") << label << RESET << "\n";
-        all_ok &= ok;
-    };
-
-    check({1, 0, 0, 0}, {1, 0, 0, 0}, "1 x 1");
-    check({0, 0, 0, 0}, {42, 0, 0, 0}, "0 x 42");
+    test_multiply_vs_gmp({1, 0, 0, 0}, {1, 0, 0, 0}, "1 x 1");
+    test_multiply_vs_gmp({0, 0, 0, 0}, {42, 0, 0, 0}, "0 x 42");
 }
 
 void test_identities(size_t L) {
     cout << YELLOW << "\n[Test] Identities, L = " << L << " limbs" << RESET << "\n";
     vector<uint32_t> Z(L, 0);
     vector<uint32_t> O(L, 1);
-    vector<OutputLimbType> R;
 
-    chrono::duration<double, milli> duration;
-    host_multiply_merge(Z, Z, R, duration);
-    assert(all_of(R.begin(), R.end(), [](auto x){return x==0;}));
-
-    host_multiply_merge(O, Z, R, duration);
-    assert(all_of(R.begin(), R.end(), [](auto x){return x==0;}));
-
-    host_multiply_merge(O, O, R, duration);
-    assert(R[0] == 1);
-    cout << GREEN_BOLD << "[PASS] Identities correct\n" << RESET;
+    test_multiply_vs_gmp(Z, Z, "0 x 0");
+    test_multiply_vs_gmp(O, Z, "1 x 0");
+    test_multiply_vs_gmp(O, O, "1 x 1");
 }
 
 void test_root_of_unity(size_t L)
@@ -320,9 +324,6 @@ void test_root_of_unity(size_t L)
     // neutral multiplier so A survives pipeline
     B[0] = 1;
 
-    vector<OutputLimbType> C;
-    chrono::duration<double, milli> duration;
-
     cout << "[INFO] Expect forward NTT of A to resemble:\n"
      << "       [1, w, w^2, ...] up to output permutation\n"
      << "       check debug logs for:\n"
@@ -330,24 +331,7 @@ void test_root_of_unity(size_t L)
      << "       - -1 mod p appears somewhere\n"
      << "       - entries appear distinct\n";
 
-    host_multiply_merge(A, B, C, duration);
-
-    // convolution identity sanity:
-    // multiplying by [1,0,0,...] should reproduce A
-    vector<OutputLimbType> expected(A.size() + B.size(), 0);
-    expected[1] = 1;
-
-    bool ok = compare_vectors(C, expected);
-
-    if (ok)
-        cout << GREEN_BOLD
-             << "[PASS] Root probe completed "
-             << "(inspect debug NTT output)"
-             << RESET << "\n";
-    else
-        cout << RED_BOLD
-             << "[FAIL] Root probe convolution incorrect"
-             << RESET << "\n";
+    test_multiply_vs_gmp(A, B, "root-of-unity probe");
 }
 
 // ---------------- BENCHMARK ----------------
@@ -406,6 +390,8 @@ void benchmark_vs_gmp(size_t L)
 
     bool ok = compare_vectors(C_gpu, C_gmp);
     cout << (ok ? GREEN_BOLD "[MATCH]\n" RESET : RED_BOLD "[MISMATCH]\n" RESET);
+    if (!ok)
+        exit(1);
 }
 
 void profile_run(size_t L)
@@ -503,6 +489,62 @@ void test_native_pipeline(size_t L) {
     if (!ok) exit(1);
 }
 
+static constexpr size_t NATIVE_CRT_BOUND_GPU_CAP = size_t(1) << 22;
+
+void assert_native_multiply_supported(size_t L, const string& label)
+{
+    string why;
+    if (!multiply_size_supported(L, L, &why)) {
+        cout << RED_BOLD << "[FAIL] expected supported: " << label
+             << " (L=" << L << "): " << why << RESET << "\n";
+        exit(1);
+    }
+    cout << GREEN_BOLD << "[PASS] supported: " << label
+         << " (L=" << L << ")" << RESET << "\n";
+}
+
+void assert_native_multiply_unsupported(size_t L, const string& label)
+{
+    string why;
+    if (multiply_size_supported(L, L, &why)) {
+        cout << RED_BOLD << "[FAIL] expected unsupported: " << label
+             << " (L=" << L << ")" << RESET << "\n";
+        exit(1);
+    }
+    cout << GREEN_BOLD << "[PASS] unsupported: " << label
+         << " (L=" << L << ")" << RESET << "\n";
+}
+
+void test_native_crt_bound_regression()
+{
+    const size_t Lmax = max_supported_limb_count();
+    cout << YELLOW << "\n[Test] CRT bound regression (Lmax="
+         << Lmax << ")" << RESET << "\n";
+
+    if (Lmax >= 2)
+        assert_native_multiply_supported(Lmax - 1, "Lmax-1");
+    assert_native_multiply_supported(Lmax, "Lmax");
+    assert_native_multiply_unsupported(Lmax + 1, "Lmax+1");
+
+    auto run_gpu_if_feasible = [&](size_t L, const string& tag) {
+        if (L == 0)
+            return;
+        if (L > NATIVE_CRT_BOUND_GPU_CAP) {
+            cout << YELLOW << "[SKIP] GPU multiply at L=" << L
+                 << " (cap " << NATIVE_CRT_BOUND_GPU_CAP << "): " << tag
+                 << RESET << "\n";
+            return;
+        }
+        cout << YELLOW << "\n[Test] 64-bit multiply L=" << L
+             << " (" << tag << ")" << RESET << "\n";
+        test_native_pipeline(L);
+    };
+
+    if (Lmax >= 2)
+        run_gpu_if_feasible(Lmax - 1, "GPU vs GMP at Lmax-1");
+    run_gpu_if_feasible(Lmax, "GPU vs GMP at Lmax");
+}
+
 int main() {
     cout << YELLOW << "==== 64-BIT FULL MULTIPLY TEST ====\n" << RESET;
     test_native_pipeline(4);
@@ -513,6 +555,7 @@ int main() {
     test_native_pipeline(1 << 10);   // 1024
     test_native_pipeline(1 << 16);   // 65536
     test_native_pipeline(1 << 20);   // 1048576
+    test_native_crt_bound_regression();
     cout << YELLOW << "==== TEST COMPLETE ====\n" << RESET;
     return 0;
 }
@@ -547,6 +590,8 @@ int main()
         test_full_pipeline(2048);
         test_full_pipeline(10000);
         test_full_pipeline(1ULL << 15);
+
+        test_crt_bound_regression();
 
         benchmark_vs_gmp(4);
         benchmark_vs_gmp(256);

@@ -13,6 +13,12 @@ void check(const char* name, bool ok) {
     else     { printf("  FAIL  %s\n", name); failed++; }
 }
 
+#if LIMB_BITS == 64
+static constexpr TestDataTypeUint kZeroPadModulus = 0x400002600000001ULL;
+#else
+static constexpr TestDataTypeUint kZeroPadModulus = 0x2d000001ULL;
+#endif
+
 std::vector<TestDataTypeUint> run(const std::vector<uint32_t>& src, size_t N) {
     size_t L = src.size();
 
@@ -23,7 +29,7 @@ std::vector<TestDataTypeUint> run(const std::vector<uint32_t>& src, size_t N) {
 
     cudaMemcpy(d_src, src.data(), L * sizeof(uint32_t), cudaMemcpyHostToDevice);
 
-    zero_pad_gpu(d_src, d_dst, L, N, /*stream=*/0);
+    zero_pad_gpu(d_src, d_dst, L, N, kZeroPadModulus, /*stream=*/0);
     cudaDeviceSynchronize();
 
     std::vector<TestDataTypeUint> out(N);
@@ -39,7 +45,8 @@ void test_normal_pad() {
     auto out = run(src, 8);
 
     bool ok = true;
-    for (size_t i = 0; i < 4; i++) ok &= (out[i] == src[i]);
+    for (size_t i = 0; i < 4; i++)
+        ok &= (out[i] == (TestDataTypeUint)(src[i] % kZeroPadModulus));
     for (size_t i = 4; i < 8; i++) ok &= (out[i] == 0);
     check("normal pad (L=4, N=8)", ok);
 }
@@ -49,7 +56,8 @@ void test_noop_pad() {
     auto out = run(src, 4);
 
     bool ok = true;
-    for (size_t i = 0; i < 4; i++) ok &= (out[i] == src[i]);
+    for (size_t i = 0; i < 4; i++)
+        ok &= (out[i] == (TestDataTypeUint)(src[i] % kZeroPadModulus));
     check("no-op pad (L==N)", ok);
 }
 
@@ -67,7 +75,8 @@ void test_zeros_in_source_preserved() {
     auto out = run(src, 8);
 
     bool ok = true;
-    for (size_t i = 0; i < 4; i++) ok &= (out[i] == src[i]);
+    for (size_t i = 0; i < 4; i++)
+        ok &= (out[i] == (TestDataTypeUint)(src[i] % kZeroPadModulus));
     for (size_t i = 4; i < 8; i++) ok &= (out[i] == 0);
     check("zeros in source preserved", ok);
 }
@@ -80,7 +89,7 @@ void test_no_upper_bits_set() {
 
     bool ok = true;
     for (size_t i = 0; i < 3; i++) {
-        ok &= (out[i] == (TestDataTypeUint)src[i]);  // value preserved exactly
+        ok &= (out[i] == (TestDataTypeUint)(src[i] % kZeroPadModulus));
         if constexpr (sizeof(TestDataTypeUint) == 8)
             ok &= ((static_cast<uint64_t>(out[i]) & 0xFFFFFFFF00000000ULL) == 0);
     }
@@ -97,7 +106,8 @@ void test_large_N() {
     auto out = run(src, N);
 
     bool ok = true;
-    for (size_t i = 0; i < L && ok; i++) ok &= (out[i] == src[i]);
+    for (size_t i = 0; i < L && ok; i++)
+        ok &= (out[i] == (TestDataTypeUint)(src[i] % kZeroPadModulus));
     for (size_t i = L; i < N && ok; i++) ok &= (out[i] == 0);
     check("large N (L=2^20, N=2^23)", ok);
 }

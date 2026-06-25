@@ -8,6 +8,7 @@ void zero_pad_gpu(
     TestDataTypeUint* d_dst,
     size_t L,
     size_t N,
+    TestDataTypeUint modulus,
     cudaStream_t stream);
 
 #if defined(NATIVE_HOST_LIMBS)
