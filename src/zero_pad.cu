@@ -1,6 +1,10 @@
 #include "zero_pad.h"
 #include "cuda_check.h"
 
+// Zero-pad and reduce each ingress limb mod p_i before forward NTT.
+// On hybrid (LIMB_BITS==64, 32-bit host limbs): p_i > 2^32 so limb % p_i is a
+// no-op for valid inputs; we keep the same path anyway — benchmarks show
+// negligible cost vs widening alone.
 __global__ void zero_pad_kernel(
     const uint32_t* __restrict__ src,
     TestDataTypeUint* __restrict__ dst,
