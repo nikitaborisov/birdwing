@@ -50,6 +50,10 @@ __global__ void carry_inter_segment_kernel(
 
 // Pass 3: each block adds the incoming carry into its segment's limbs,
 // propagating within the segment if an addition overflows a limb.
+// The host retries this kernel until escape_flag stays zero: when incoming
+// carry cannot fit in the remaining limbs of a segment, the overflow is
+// atomically added to seg_carry[seg+1] and another pass is needed so the
+// next segment can absorb it (carry can ripple across many segments).
 __global__ void carry_fixup_kernel(
     OutputLimbType* __restrict__ out,
     int64_t*          __restrict__ seg_carry,
@@ -64,6 +68,10 @@ __global__ void carry_fixup_kernel(
     size_t seg_end   = min(seg_start + CARRY_SEG, N);
 
     int64_t incoming = seg_carry[seg];
+    // Consume now: the host may rerun this kernel when escape_flag is set.
+    // Leaving the slot nonzero would re-apply the same incoming carry on the
+    // next pass (double-counting at segment boundaries).
+    seg_carry[seg] = 0;
     if (incoming == 0) return;
 
     for (size_t i = seg_start; i < seg_end && incoming != 0; i++) {
@@ -73,6 +81,7 @@ __global__ void carry_fixup_kernel(
     }
 
     if (incoming != 0 && seg + 1 < num_segs) {
+        // Carry escaped this segment; defer to the next fixup iteration.
         atomicAdd(reinterpret_cast<unsigned long long*>(&seg_carry[seg + 1]),
                   static_cast<unsigned long long>(incoming));
         *escape_flag = 1;
@@ -189,9 +198,14 @@ __global__ void carry_fixup_kernel_u160(
     uint64_t c_lo = seg_carry_lo[seg];
     uint64_t c_mid = seg_carry_mid[seg];
     uint32_t c_hi = seg_carry_hi[seg];
+    // Same consume-on-read as carry_fixup_kernel (see comment there).
+    seg_carry_lo[seg] = 0;
+    seg_carry_mid[seg] = 0;
+    seg_carry_hi[seg] = 0;
     if (c_lo == 0 && c_mid == 0 && c_hi == 0) return;
 
-    for (size_t i = seg_start; i < seg_end; i++) {
+    // Stop early once carry is fully absorbed (mirrors the u128 fixup loop).
+    for (size_t i = seg_start; i < seg_end && (c_lo != 0 || c_mid != 0 || c_hi != 0); i++) {
         uint64_t lo = out[i];
         uint64_t mid = 0;
         uint32_t hi = 0;
@@ -203,6 +217,7 @@ __global__ void carry_fixup_kernel_u160(
     }
 
     if ((c_lo != 0 || c_mid != 0 || c_hi != 0) && seg + 1 < num_segs) {
+        // Carry escaped this segment; defer to the next fixup iteration.
         atomic_add_seg_u160(seg_carry_lo, seg_carry_mid, seg_carry_hi,
                             seg + 1, c_lo, c_mid, c_hi);
         *escape_flag = 1;
