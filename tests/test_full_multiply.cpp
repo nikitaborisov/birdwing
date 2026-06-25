@@ -334,6 +334,23 @@ void test_root_of_unity(size_t L)
     test_multiply_vs_gmp(A, B, "root-of-unity probe");
 }
 
+void test_max_limb_multiply(size_t L)
+{
+    cout << YELLOW << "\n[Test] All MAX limbs (UINT32_MAX), L = "
+         << L << RESET << "\n";
+    vector<uint32_t> A(L, UINT32_MAX);
+    vector<uint32_t> B(L, UINT32_MAX);
+    test_multiply_vs_gmp(A, B, "MAX limbs L=" + to_string(L));
+}
+
+void test_max_limb_suite()
+{
+    cout << YELLOW << "\n==== MAX-LIMB (0xFFFFFFFF) vs GMP ====\n" << RESET;
+    const size_t sizes[] = {size_t(1) << 10, size_t(1) << 15, size_t(1) << 20};
+    for (size_t L : sizes)
+        test_max_limb_multiply(L);
+}
+
 // ---------------- BENCHMARK ----------------
 void benchmark_vs_gmp(size_t L)
 {
@@ -489,6 +506,32 @@ void test_native_pipeline(size_t L) {
     if (!ok) exit(1);
 }
 
+void test_native_max_limb_multiply(size_t L)
+{
+    cout << YELLOW << "\n[Test] All MAX limbs (UINT64_MAX), L = "
+         << L << RESET << "\n";
+    vector<uint64_t> A(L, UINT64_MAX);
+    vector<uint64_t> B(L, UINT64_MAX);
+    vector<uint64_t> C_gpu;
+    chrono::duration<double, milli> dur;
+    host_multiply_merge_native(A, B, C_gpu, dur);
+    vector<uint64_t> C_gmp = gmp_mul_u64(A, B);
+    bool ok = compare_u64(C_gpu, C_gmp);
+    cout << (ok ? GREEN_BOLD "[PASS] " : RED_BOLD "[FAIL] ")
+         << "MAX limbs L=" << L << RESET << "\n";
+    if (!ok)
+        exit(1);
+}
+
+void test_native_max_limb_suite()
+{
+    cout << YELLOW << "\n==== MAX-LIMB (0xFFFFFFFFFFFFFFFF) vs GMP ====\n"
+         << RESET;
+    const size_t sizes[] = {size_t(1) << 10, size_t(1) << 15, size_t(1) << 20};
+    for (size_t L : sizes)
+        test_native_max_limb_multiply(L);
+}
+
 static constexpr size_t NATIVE_CRT_BOUND_GPU_CAP = size_t(1) << 22;
 
 void assert_native_multiply_supported(size_t L, const string& label)
@@ -555,6 +598,7 @@ int main() {
     test_native_pipeline(1 << 10);   // 1024
     test_native_pipeline(1 << 16);   // 65536
     test_native_pipeline(1 << 20);   // 1048576
+    test_native_max_limb_suite();
     test_native_crt_bound_regression();
     cout << YELLOW << "==== TEST COMPLETE ====\n" << RESET;
     return 0;
@@ -590,6 +634,8 @@ int main()
         test_full_pipeline(2048);
         test_full_pipeline(10000);
         test_full_pipeline(1ULL << 15);
+
+        test_max_limb_suite();
 
         test_crt_bound_regression();
 

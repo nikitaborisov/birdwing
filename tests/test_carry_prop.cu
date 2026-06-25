@@ -3,6 +3,7 @@
 #include <cuda_runtime.h>
 #include <cstdio>
 #include <cstdint>
+#include <cstring>
 #include <vector>
 #include "carry_prop.h"
 #include "config.h"
@@ -87,6 +88,70 @@ static void to_hilo(unsigned __int128 val, uint64_t& hi, uint64_t& lo) {
     hi = (uint64_t)(val >> 64);
 }
 
+// Smallest power-of-two N >= L_A + L_B - 1 (matches ntt_limits.cpp).
+static size_t padded_ntt_size(size_t L_A, size_t L_B) {
+    size_t min_N = L_A + L_B - 1;
+    size_t N = 1;
+    while (N < min_N)
+        N <<= 1;
+    return N;
+}
+
+// Pair count in the convolution of two length-L all-MAX operands at index k.
+static size_t max_conv_pairs(size_t L, size_t k) {
+    if (k >= 2 * L - 1)
+        return 0;
+    return (k < L) ? (k + 1) : (2 * L - 1 - k);
+}
+
+// Limb k of (2^{wL} - 1)^2 in base 2^w, w = OUTPUT_LIMB_BITS (2L limbs total).
+static OutputLimbType expected_max_square_limb(size_t L, size_t k) {
+    if (k == 0)
+        return 1;
+    if (k < L)
+        return 0;
+    if (k == L)
+        return (OutputLimbType)(OUTPUT_LIMB_MASK - 1);
+    if (k > L && k <= 2 * L - 1)
+        return (OutputLimbType)OUTPUT_LIMB_MASK;
+    return 0;
+}
+
+static bool compare_to_expected_square(
+    const vector<OutputLimbType>& got,
+    size_t L,
+    size_t N,
+    const char* name)
+{
+    bool ok = true;
+    size_t first_bad = N;
+    for (size_t k = 0; k < N; k++) {
+        OutputLimbType exp = expected_max_square_limb(L, k);
+        if (got[k] != exp) {
+            ok = false;
+            if (first_bad == N)
+                first_bad = k;
+        }
+    }
+    if (!ok) {
+        printf("  [%s] first mismatch k=%zu", name, first_bad);
+        if (first_bad < N) {
+            printf(" gpu=%llu exp=%llu",
+                   (unsigned long long)got[first_bad],
+                   (unsigned long long)expected_max_square_limb(L, first_bad));
+        }
+        printf("\n");
+        for (size_t k = first_bad; k < N && k < first_bad + 4; k++) {
+            if (got[k] != expected_max_square_limb(L, k))
+                printf("    k=%zu gpu=%llu exp=%llu\n",
+                       k, (unsigned long long)got[k],
+                       (unsigned long long)expected_max_square_limb(L, k));
+        }
+    }
+    check(name, ok);
+    return ok;
+}
+
 static bool check_gpu_cpu(
     const vector<uint64_t>& C_hi,
     const vector<uint64_t>& C_lo,
@@ -113,6 +178,18 @@ static void to_u160(unsigned __int128 val, uint64_t& lo, uint64_t& mid, uint32_t
     lo = (uint64_t)val;
     mid = (uint64_t)(val >> 64);
     hi = 0;
+}
+
+// pairs * (b_lo + b_hi * 2^64) as 160-bit little-endian limbs.
+static void mul_u64_u128_to_u160(uint64_t a, uint64_t b_lo, uint64_t b_hi,
+                                 uint64_t& out_lo, uint64_t& out_mid, uint32_t& out_hi) {
+    unsigned __int128 pl = (unsigned __int128)a * b_lo;
+    unsigned __int128 ph = (unsigned __int128)a * b_hi;
+    unsigned __int128 mid = (pl >> 64) + ph;
+
+    out_lo = (uint64_t)pl;
+    out_mid = (uint64_t)mid;
+    out_hi = (uint32_t)(mid >> 64);
 }
 
 static void to_u160_full(uint64_t lo_in, uint64_t mid_in, uint32_t hi_in,
@@ -326,6 +403,38 @@ static void test_u160_large_random() {
     check_gpu_cpu_u160(C_lo, C_mid, C_hi, N, "u160 large random (N=2^12)");
 }
 
+// Regression: CRT coeffs from all-MAX convolution -> carry -> (2^{64L}-1)^2 limbs.
+static void test_max_convolution_carry_regression() {
+    static const size_t Ls[] = {1u << 10, 1u << 15, 1u << 20};
+    const InputLimbType MAX = (InputLimbType)OUTPUT_LIMB_MASK;
+    unsigned __int128 max_sq = (unsigned __int128)MAX * MAX;
+    const uint64_t max_sq_lo = (uint64_t)max_sq;
+    const uint64_t max_sq_hi = (uint64_t)(max_sq >> 64);
+
+    for (size_t L : Ls) {
+        size_t N = padded_ntt_size(L, L);
+        vector<uint64_t> C_lo(N, 0), C_mid(N, 0);
+        vector<uint32_t> C_hi(N, 0);
+
+        for (size_t k = 0; k < N; k++) {
+            size_t pairs = max_conv_pairs(L, k);
+            mul_u64_u128_to_u160(pairs, max_sq_lo, max_sq_hi,
+                                 C_lo[k], C_mid[k], C_hi[k]);
+        }
+
+        char name[80];
+        char cpu_name[96];
+        snprintf(name, sizeof(name), "max convolution carry L=%zu", L);
+        snprintf(cpu_name, sizeof(cpu_name), "%s (cpu oracle)", name);
+
+        auto cpu = cpu_carry_prop_u160(C_lo, C_mid, C_hi, N);
+        compare_to_expected_square(cpu, L, N, cpu_name);
+
+        auto gpu = run_carry_prop_gpu_u160(C_lo, C_mid, C_hi, N);
+        compare_to_expected_square(gpu, L, N, name);
+    }
+}
+
 #endif // NATIVE_HOST_LIMBS
 
 static void test_all_zeros() {
@@ -389,6 +498,37 @@ static void test_large_random() {
     check_gpu_cpu(C_hi, C_lo, N, "large random (N=2^16)");
 }
 
+// Regression: CRT coeffs from all-MAX convolution -> carry -> (2^{32L}-1)^2 limbs.
+#if !defined(NATIVE_HOST_LIMBS)
+static void test_max_convolution_carry_regression() {
+    static const size_t Ls[] = {1u << 10, 1u << 15, 1u << 20};
+    const InputLimbType MAX = (InputLimbType)OUTPUT_LIMB_MASK;
+    const unsigned __int128 max_sq = (unsigned __int128)MAX * MAX;
+
+    for (size_t L : Ls) {
+        size_t N = padded_ntt_size(L, L);
+        vector<uint64_t> C_hi(N, 0), C_lo(N, 0);
+
+        for (size_t k = 0; k < N; k++) {
+            size_t pairs = max_conv_pairs(L, k);
+            unsigned __int128 coeff = (unsigned __int128)pairs * max_sq;
+            to_hilo(coeff, C_hi[k], C_lo[k]);
+        }
+
+        char name[80];
+        char cpu_name[96];
+        snprintf(name, sizeof(name), "max convolution carry L=%zu", L);
+        snprintf(cpu_name, sizeof(cpu_name), "%s (cpu oracle)", name);
+
+        auto cpu = cpu_carry_prop(C_hi, C_lo, N);
+        compare_to_expected_square(cpu, L, N, cpu_name);
+
+        auto gpu = run_carry_prop_gpu(C_hi, C_lo, N);
+        compare_to_expected_square(gpu, L, N, name);
+    }
+}
+#endif // !NATIVE_HOST_LIMBS
+
 int main() {
     printf("=== carry_prop unit tests (LIMB_BITS=%d, output=%d-bit limbs) ===\n",
            LIMB_BITS, OUTPUT_LIMB_BITS);
@@ -407,6 +547,7 @@ int main() {
     test_u160_cross_segment_carry();
     test_u160_multi_segment_random();
     test_u160_large_random();
+    test_max_convolution_carry_regression();
 #else
     static_assert(OUTPUT_LIMB_BITS == 32, "carry output must be 32-bit limbs");
     static_assert(sizeof(OutputLimbType) == 4, "OutputLimbType must be uint32_t");
@@ -418,6 +559,7 @@ int main() {
     test_wide_128bit_coeff();
     test_cross_segment_carry();
     test_large_random();
+    test_max_convolution_carry_regression();
 #endif
 
     printf("\n%d passed, %d failed\n", passed, failed);
