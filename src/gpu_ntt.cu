@@ -3,6 +3,7 @@
 #include "zero_pad.h"
 #include "carry_prop.h"
 #include <cuda_runtime.h>
+#include "cuda_check.h"
 #include <chrono>
 #include <memory>
 #include <iostream>
@@ -50,24 +51,24 @@ struct GPUTimer {
     cudaEvent_t start, stop;
 
     GPUTimer() {
-        cudaEventCreate(&start);
-        cudaEventCreate(&stop);
+        CUDA_CHECK(cudaEventCreate(&start));
+        CUDA_CHECK(cudaEventCreate(&stop));
     }
 
     ~GPUTimer() {
-        cudaEventDestroy(start);
-        cudaEventDestroy(stop);
+        CUDA_CHECK(cudaEventDestroy(start));
+        CUDA_CHECK(cudaEventDestroy(stop));
     }
 
     void tic(cudaStream_t stream = 0) {
-        cudaEventRecord(start, stream);
+        CUDA_CHECK(cudaEventRecord(start, stream));
     }
 
     float toc(cudaStream_t stream = 0) {
-        cudaEventRecord(stop, stream);
-        cudaEventSynchronize(stop);
+        CUDA_CHECK(cudaEventRecord(stop, stream));
+        CUDA_CHECK(cudaEventSynchronize(stop));
         float ms = 0;
-        cudaEventElapsedTime(&ms, start, stop);
+        CUDA_CHECK(cudaEventElapsedTime(&ms, start, stop));
         return ms;
     }
 };
@@ -96,15 +97,15 @@ struct StageProfiler {
     explicit StageProfiler(bool active) : on(active) {
         if (!on)
             return;
-        cudaEventCreate(&execute_start);
-        cudaEventCreate(&execute_stop);
-        cudaEventCreate(&h2d_start);
-        cudaEventCreate(&h2d_stop_a);
-        cudaEventCreate(&h2d_stop_b);
-        cudaEventCreate(&fwd_start_a);
-        cudaEventCreate(&fwd_stop_a);
-        cudaEventCreate(&fwd_start_b);
-        cudaEventCreate(&fwd_stop_b);
+        CUDA_CHECK(cudaEventCreate(&execute_start));
+        CUDA_CHECK(cudaEventCreate(&execute_stop));
+        CUDA_CHECK(cudaEventCreate(&h2d_start));
+        CUDA_CHECK(cudaEventCreate(&h2d_stop_a));
+        CUDA_CHECK(cudaEventCreate(&h2d_stop_b));
+        CUDA_CHECK(cudaEventCreate(&fwd_start_a));
+        CUDA_CHECK(cudaEventCreate(&fwd_stop_a));
+        CUDA_CHECK(cudaEventCreate(&fwd_start_b));
+        CUDA_CHECK(cudaEventCreate(&fwd_stop_b));
         mul_timer = make_unique<GPUTimer>();
         intt_timer = make_unique<GPUTimer>();
         crt_timer = make_unique<GPUTimer>();
@@ -115,21 +116,21 @@ struct StageProfiler {
     ~StageProfiler() {
         if (!on)
             return;
-        cudaEventDestroy(execute_start);
-        cudaEventDestroy(execute_stop);
-        cudaEventDestroy(h2d_start);
-        cudaEventDestroy(h2d_stop_a);
-        cudaEventDestroy(h2d_stop_b);
-        cudaEventDestroy(fwd_start_a);
-        cudaEventDestroy(fwd_stop_a);
-        cudaEventDestroy(fwd_start_b);
-        cudaEventDestroy(fwd_stop_b);
+        CUDA_CHECK(cudaEventDestroy(execute_start));
+        CUDA_CHECK(cudaEventDestroy(execute_stop));
+        CUDA_CHECK(cudaEventDestroy(h2d_start));
+        CUDA_CHECK(cudaEventDestroy(h2d_stop_a));
+        CUDA_CHECK(cudaEventDestroy(h2d_stop_b));
+        CUDA_CHECK(cudaEventDestroy(fwd_start_a));
+        CUDA_CHECK(cudaEventDestroy(fwd_stop_a));
+        CUDA_CHECK(cudaEventDestroy(fwd_start_b));
+        CUDA_CHECK(cudaEventDestroy(fwd_stop_b));
     }
 
     static float elapsed_ms(cudaEvent_t start, cudaEvent_t stop) {
         float ms = 0.0f;
-        cudaEventSynchronize(stop);
-        cudaEventElapsedTime(&ms, start, stop);
+        CUDA_CHECK(cudaEventSynchronize(stop));
+        CUDA_CHECK(cudaEventElapsedTime(&ms, start, stop));
         return ms;
     }
 
@@ -326,31 +327,31 @@ void upload_ntt_precomputed(NTTPrecomputed& pre, SetupUploadTiming* timing_out) 
         const auto &inv = pre.inverse_omega_host[i];
 
         auto t_twiddle_upload_start = clock::now();
-        cudaMalloc(&pre.forward_omega_dev[i],
-                   p.root_of_unity_size * sizeof(Root<TestDataType>));
-        cudaMemcpy(pre.forward_omega_dev[i], fwd.data(),
+        CUDA_CHECK(cudaMalloc(&pre.forward_omega_dev[i],
+                   p.root_of_unity_size * sizeof(Root<TestDataType>)));
+        CUDA_CHECK(cudaMemcpy(pre.forward_omega_dev[i], fwd.data(),
                    p.root_of_unity_size * sizeof(Root<TestDataType>),
-                   cudaMemcpyHostToDevice);
+                   cudaMemcpyHostToDevice));
 
-        cudaMalloc(&pre.inverse_omega_dev[i],
-                   p.root_of_unity_size * sizeof(Root<TestDataType>));
-        cudaMemcpy(pre.inverse_omega_dev[i], inv.data(),
+        CUDA_CHECK(cudaMalloc(&pre.inverse_omega_dev[i],
+                   p.root_of_unity_size * sizeof(Root<TestDataType>)));
+        CUDA_CHECK(cudaMemcpy(pre.inverse_omega_dev[i], inv.data(),
                    p.root_of_unity_size * sizeof(Root<TestDataType>),
-                   cudaMemcpyHostToDevice);
+                   cudaMemcpyHostToDevice));
         const auto t_twiddle_upload_end = clock::now();
         if (profile)
             twiddle_upload_ms += elapsed_ms(t_twiddle_upload_start, t_twiddle_upload_end);
 
         auto t_mod_constants_start = clock::now();
-        cudaMalloc(&pre.modulus_dev[i], sizeof(Modulus<TestDataType>));
+        CUDA_CHECK(cudaMalloc(&pre.modulus_dev[i], sizeof(Modulus<TestDataType>)));
         Modulus<TestDataType> mod_host[1] = {p.modulus};
-        cudaMemcpy(pre.modulus_dev[i], mod_host,
-                   sizeof(Modulus<TestDataType>), cudaMemcpyHostToDevice);
+        CUDA_CHECK(cudaMemcpy(pre.modulus_dev[i], mod_host,
+                   sizeof(Modulus<TestDataType>), cudaMemcpyHostToDevice));
 
-        cudaMalloc(&pre.ninv_dev[i], sizeof(Ninverse<TestDataType>));
+        CUDA_CHECK(cudaMalloc(&pre.ninv_dev[i], sizeof(Ninverse<TestDataType>)));
         Ninverse<TestDataType> ninv_host[1] = {p.n_inv};
-        cudaMemcpy(pre.ninv_dev[i], ninv_host,
-                   sizeof(Ninverse<TestDataType>), cudaMemcpyHostToDevice);
+        CUDA_CHECK(cudaMemcpy(pre.ninv_dev[i], ninv_host,
+                   sizeof(Ninverse<TestDataType>), cudaMemcpyHostToDevice));
         const auto t_mod_constants_end = clock::now();
         if (profile)
             mod_constants_ms += elapsed_ms(t_mod_constants_start, t_mod_constants_end);
@@ -404,34 +405,34 @@ NTTContext allocate_ntt_context(const NTTPrecomputed &pre, size_t L_A, size_t L_
     for (int i = 0; i < NUM_MODULI; i++) {
         const auto &p = pre.params[i];
 
-        cudaMalloc(&ctx.a_dev[i], p.n * sizeof(TestDataType));
-        cudaMalloc(&ctx.b_dev[i], p.n * sizeof(TestDataType));
-        cudaMalloc(&ctx.c_dev[i], p.n * sizeof(TestDataType));
+        CUDA_CHECK(cudaMalloc(&ctx.a_dev[i], p.n * sizeof(TestDataType)));
+        CUDA_CHECK(cudaMalloc(&ctx.b_dev[i], p.n * sizeof(TestDataType)));
+        CUDA_CHECK(cudaMalloc(&ctx.c_dev[i], p.n * sizeof(TestDataType)));
     }
 
-    cudaMalloc(&ctx.a_raw_dev, L_A * sizeof(InputLimbType));
-    cudaMalloc(&ctx.b_raw_dev, L_B * sizeof(InputLimbType));
+    CUDA_CHECK(cudaMalloc(&ctx.a_raw_dev, L_A * sizeof(InputLimbType)));
+    CUDA_CHECK(cudaMalloc(&ctx.b_raw_dev, L_B * sizeof(InputLimbType)));
 #if defined(NATIVE_HOST_LIMBS)
-    cudaMalloc(&ctx.d_C_lo, pre.N * sizeof(uint64_t));
-    cudaMalloc(&ctx.d_C_mid, pre.N * sizeof(uint64_t));
-    cudaMalloc(&ctx.d_C_hi32, pre.N * sizeof(uint32_t));
+    CUDA_CHECK(cudaMalloc(&ctx.d_C_lo, pre.N * sizeof(uint64_t)));
+    CUDA_CHECK(cudaMalloc(&ctx.d_C_mid, pre.N * sizeof(uint64_t)));
+    CUDA_CHECK(cudaMalloc(&ctx.d_C_hi32, pre.N * sizeof(uint32_t)));
 #else
-    cudaMalloc(&ctx.d_C_hi, pre.N * sizeof(uint64_t));
-    cudaMalloc(&ctx.d_C_lo, pre.N * sizeof(uint64_t));
+    CUDA_CHECK(cudaMalloc(&ctx.d_C_hi, pre.N * sizeof(uint64_t)));
+    CUDA_CHECK(cudaMalloc(&ctx.d_C_lo, pre.N * sizeof(uint64_t)));
 #endif
-    cudaMalloc(&ctx.d_out,  (pre.N + 1) * sizeof(OutputLimbType));
+    CUDA_CHECK(cudaMalloc(&ctx.d_out,  (pre.N + 1) * sizeof(OutputLimbType)));
     size_t num_segs = (pre.N + CARRY_SEG - 1) / CARRY_SEG;
 #if defined(NATIVE_HOST_LIMBS)
-    cudaMalloc(&ctx.d_seg_carry_lo, num_segs * sizeof(uint64_t));
-    cudaMalloc(&ctx.d_seg_carry_mid, num_segs * sizeof(uint64_t));
-    cudaMalloc(&ctx.d_seg_carry_hi, num_segs * sizeof(uint32_t));
+    CUDA_CHECK(cudaMalloc(&ctx.d_seg_carry_lo, num_segs * sizeof(uint64_t)));
+    CUDA_CHECK(cudaMalloc(&ctx.d_seg_carry_mid, num_segs * sizeof(uint64_t)));
+    CUDA_CHECK(cudaMalloc(&ctx.d_seg_carry_hi, num_segs * sizeof(uint32_t)));
 #else
-    cudaMalloc(&ctx.d_seg_carry, num_segs * sizeof(int64_t));
+    CUDA_CHECK(cudaMalloc(&ctx.d_seg_carry, num_segs * sizeof(int64_t)));
 #endif
-    cudaMalloc(&ctx.d_carry_escape, sizeof(int));
+    CUDA_CHECK(cudaMalloc(&ctx.d_carry_escape, sizeof(int)));
 
-    cudaStreamCreate(&ctx.stream_a);
-    cudaStreamCreate(&ctx.stream_b);
+    CUDA_CHECK(cudaStreamCreate(&ctx.stream_a));
+    CUDA_CHECK(cudaStreamCreate(&ctx.stream_b));
 
     upload_residue_ptrs(ctx.c_dev);
 
@@ -460,23 +461,23 @@ void execute_ntt_multiply(
     NTTTiming timing{};
 
     if (prof.on)
-        cudaEventRecord(prof.execute_start, ctx.stream_a);
+        CUDA_CHECK(cudaEventRecord(prof.execute_start, ctx.stream_a));
 
     if (prof.on)
-        cudaEventRecord(prof.h2d_start, ctx.stream_a);
+        CUDA_CHECK(cudaEventRecord(prof.h2d_start, ctx.stream_a));
 
-    cudaMemcpyAsync(ctx.a_raw_dev, a_pinned,
+    CUDA_CHECK(cudaMemcpyAsync(ctx.a_raw_dev, a_pinned,
                 ctx.L_A * sizeof(InputLimbType),
-                cudaMemcpyHostToDevice, ctx.stream_a);
-    cudaMemcpyAsync(ctx.b_raw_dev, b_pinned,
+                cudaMemcpyHostToDevice, ctx.stream_a));
+    CUDA_CHECK(cudaMemcpyAsync(ctx.b_raw_dev, b_pinned,
                 ctx.L_B * sizeof(InputLimbType),
-                cudaMemcpyHostToDevice, ctx.stream_b);
+                cudaMemcpyHostToDevice, ctx.stream_b));
 
     if (prof.on) {
-        cudaEventRecord(prof.h2d_stop_a, ctx.stream_a);
-        cudaEventRecord(prof.h2d_stop_b, ctx.stream_b);
-        cudaEventRecord(prof.fwd_start_a, ctx.stream_a);
-        cudaEventRecord(prof.fwd_start_b, ctx.stream_b);
+        CUDA_CHECK(cudaEventRecord(prof.h2d_stop_a, ctx.stream_a));
+        CUDA_CHECK(cudaEventRecord(prof.h2d_stop_b, ctx.stream_b));
+        CUDA_CHECK(cudaEventRecord(prof.fwd_start_a, ctx.stream_a));
+        CUDA_CHECK(cudaEventRecord(prof.fwd_start_b, ctx.stream_b));
     }
     
     #if DEBUG
@@ -484,8 +485,8 @@ void execute_ntt_multiply(
     cudaStreamSynchronize(ctx.stream_a);
     cudaStreamSynchronize(ctx.stream_b);
     vector<InputLimbType> chk_a(ctx.L_A), chk_b(ctx.L_B);
-    cudaMemcpy(chk_a.data(), ctx.a_raw_dev, ctx.L_A*sizeof(InputLimbType), cudaMemcpyDeviceToHost);
-    cudaMemcpy(chk_b.data(), ctx.b_raw_dev, ctx.L_B*sizeof(InputLimbType), cudaMemcpyDeviceToHost);
+    CUDA_CHECK(cudaMemcpy(chk_a.data(), ctx.a_raw_dev, ctx.L_A*sizeof(InputLimbType), cudaMemcpyDeviceToHost));
+    CUDA_CHECK(cudaMemcpy(chk_b.data(), ctx.b_raw_dev, ctx.L_B*sizeof(InputLimbType), cudaMemcpyDeviceToHost));
     printf("a_raw: "); for(auto x:chk_a) printf("%llu ",(unsigned long long)x); printf("\n");
     printf("b_raw: "); for(auto x:chk_b) printf("%llu ",(unsigned long long)x); printf("\n");
     #endif
@@ -519,12 +520,12 @@ void execute_ntt_multiply(
         // verify zero pad
         cudaStreamSynchronize(ctx.stream_a);
         vector<TestDataTypeUint> zp(ctx.N);
-        cudaMemcpy(zp.data(), ctx.a_dev[i], ctx.N*sizeof(TestDataTypeUint), cudaMemcpyDeviceToHost);
+        CUDA_CHECK(cudaMemcpy(zp.data(), ctx.a_dev[i], ctx.N*sizeof(TestDataTypeUint), cudaMemcpyDeviceToHost));
         printf("a_dev[%d] zero_padded: ", i);
         for(int k=0;k<8;k++) printf("%u ",zp[k]); printf("\n");
 
         cudaStreamSynchronize(ctx.stream_b);
-        cudaMemcpy(zp.data(), ctx.b_dev[i], ctx.N*sizeof(TestDataTypeUint), cudaMemcpyDeviceToHost);
+        CUDA_CHECK(cudaMemcpy(zp.data(), ctx.b_dev[i], ctx.N*sizeof(TestDataTypeUint), cudaMemcpyDeviceToHost));
         printf("b_dev[%d] zero_padded: ", i);
         for(int k=0;k<8;k++) printf("%u ",zp[k]); printf("\n");
         #endif
@@ -543,19 +544,19 @@ void execute_ntt_multiply(
         vector<TestDataType> host_a(ctx.N);
         vector<TestDataType> host_b(ctx.N);
 
-        cudaMemcpy(
+        CUDA_CHECK(cudaMemcpy(
             host_a.data(),
             ctx.a_dev[i],
             ctx.N * sizeof(TestDataType),
             cudaMemcpyDeviceToHost
-        );
+        ));
 
-        cudaMemcpy(
+        CUDA_CHECK(cudaMemcpy(
             host_b.data(),
             ctx.b_dev[i],
             ctx.N * sizeof(TestDataType),
             cudaMemcpyDeviceToHost
-        );
+        ));
 
         NTTCPU<TestDataType> generatora(parameters);
         vector<TestDataType> cpu_ntt_result_a = generatora.ntt(host_a);
@@ -584,19 +585,19 @@ void execute_ntt_multiply(
         vector<TestDataType> gpu_ntt_a(ctx.N);
         vector<TestDataType> gpu_ntt_b(ctx.N);
 
-        cudaMemcpy(
+        CUDA_CHECK(cudaMemcpy(
             gpu_ntt_a.data(),
             ctx.a_dev[i],
             ctx.N * sizeof(TestDataType),
             cudaMemcpyDeviceToHost
-        );
+        ));
 
-        cudaMemcpy(
+        CUDA_CHECK(cudaMemcpy(
             gpu_ntt_b.data(),
             ctx.b_dev[i],
             ctx.N * sizeof(TestDataType),
             cudaMemcpyDeviceToHost
-        );
+        ));
 
         bool match_a = true;
         bool match_b = true;
@@ -657,8 +658,8 @@ void execute_ntt_multiply(
     cudaStreamSynchronize(ctx.stream_b);
 
     if (prof.on) {
-        cudaEventRecord(prof.fwd_stop_a, ctx.stream_a);
-        cudaEventRecord(prof.fwd_stop_b, ctx.stream_b);
+        CUDA_CHECK(cudaEventRecord(prof.fwd_stop_a, ctx.stream_a));
+        CUDA_CHECK(cudaEventRecord(prof.fwd_stop_b, ctx.stream_b));
     }
 
     if (prof.on)
@@ -669,6 +670,7 @@ void execute_ntt_multiply(
         int blocks = (ctx.N + threads - 1) / threads;
         pointwise_mul_kernel<<<blocks, threads, 0, ctx.stream_a>>>(
             ctx.a_dev[i], ctx.b_dev[i], ctx.c_dev[i], moduli[i], ctx.N);
+        CUDA_CHECK_KERNEL();
     }
     if (prof.on)
         timing.pointwise_mul_ms = prof.mul_timer->toc(ctx.stream_a);
@@ -678,12 +680,12 @@ void execute_ntt_multiply(
     cudaStreamSynchronize(ctx.stream_a);
     for (int i = 0; i < NUM_MODULI; i++) {
         vector<TestDataType> freq_domain_product(ctx.N);
-        cudaMemcpy(
+        CUDA_CHECK(cudaMemcpy(
             freq_domain_product.data(),
             ctx.c_dev[i],
             ctx.N * sizeof(TestDataType),
             cudaMemcpyDeviceToHost
-        );
+        ));
         cout << "[GPU] Pointwise product for modulus " << i << ": [ ";
         for (long unsigned int j = 0; j < ctx.N; j++) {
             cout << static_cast<unsigned long long>(freq_domain_product[j]) << " ";
@@ -711,12 +713,12 @@ void execute_ntt_multiply(
         // pull pointwise multiplication result back before inverse transform
         vector<TestDataType> freq_domain_product(ctx.N);
 
-        cudaMemcpy(
+        CUDA_CHECK(cudaMemcpy(
             freq_domain_product.data(),
             ctx.c_dev[i],
             ctx.N * sizeof(TestDataType),
             cudaMemcpyDeviceToHost
-        );
+        ));
 
         int logN = ctx.logN;
 
@@ -749,12 +751,12 @@ void execute_ntt_multiply(
         #if DEBUG
         vector<TestDataType> gpu_intt_result(ctx.N);
 
-        cudaMemcpy(
+        CUDA_CHECK(cudaMemcpy(
             gpu_intt_result.data(),
             ctx.c_dev[i],
             ctx.N * sizeof(TestDataType),
             cudaMemcpyDeviceToHost
-        );
+        ));
 
         bool intt_match = true;
 
@@ -792,12 +794,12 @@ void execute_ntt_multiply(
     for (int mod = 0; mod < NUM_MODULI; mod++) {
         vector<TestDataTypeUint> tmp(ctx.N);
 
-        cudaMemcpy(
+        CUDA_CHECK(cudaMemcpy(
             tmp.data(),
             ctx.c_dev[mod],
             ctx.N*sizeof(TestDataTypeUint),
             cudaMemcpyDeviceToHost
-        );
+        ));
 
         printf("Residues mod %d:\n", mod);
 
@@ -818,8 +820,8 @@ void execute_ntt_multiply(
     #if DEBUG && !defined(NATIVE_HOST_LIMBS)
     cudaDeviceSynchronize();
     vector<uint64_t> chi(8), clo(8);
-    cudaMemcpy(chi.data(), ctx.d_C_hi, 8*sizeof(uint64_t), cudaMemcpyDeviceToHost);
-    cudaMemcpy(clo.data(), ctx.d_C_lo, 8*sizeof(uint64_t), cudaMemcpyDeviceToHost);
+    CUDA_CHECK(cudaMemcpy(chi.data(), ctx.d_C_hi, 8*sizeof(uint64_t), cudaMemcpyDeviceToHost));
+    CUDA_CHECK(cudaMemcpy(clo.data(), ctx.d_C_lo, 8*sizeof(uint64_t), cudaMemcpyDeviceToHost));
 
     for (int k = 0; k < 8; k++) {
         unsigned __int128 x =
@@ -845,15 +847,15 @@ void execute_ntt_multiply(
         crt_lo_out->resize(ctx.N);
         crt_mid_out->resize(ctx.N);
         crt_hi32_out->resize(ctx.N);
-        cudaMemcpy(crt_lo_out->data(), ctx.d_C_lo, ctx.N * sizeof(uint64_t),
-                   cudaMemcpyDeviceToHost);
-        cudaMemcpy(crt_mid_out->data(), ctx.d_C_mid, ctx.N * sizeof(uint64_t),
-                   cudaMemcpyDeviceToHost);
-        cudaMemcpy(crt_hi32_out->data(), ctx.d_C_hi32, ctx.N * sizeof(uint32_t),
-                   cudaMemcpyDeviceToHost);
+        CUDA_CHECK(cudaMemcpy(crt_lo_out->data(), ctx.d_C_lo, ctx.N * sizeof(uint64_t),
+                   cudaMemcpyDeviceToHost));
+        CUDA_CHECK(cudaMemcpy(crt_mid_out->data(), ctx.d_C_mid, ctx.N * sizeof(uint64_t),
+                   cudaMemcpyDeviceToHost));
+        CUDA_CHECK(cudaMemcpy(crt_hi32_out->data(), ctx.d_C_hi32, ctx.N * sizeof(uint32_t),
+                   cudaMemcpyDeviceToHost));
 
         if (prof.on)
-            cudaEventRecord(prof.execute_stop, 0);
+            CUDA_CHECK(cudaEventRecord(prof.execute_stop, 0));
 
         if (prof.on)
             prof.fill(timing);
@@ -866,13 +868,13 @@ void execute_ntt_multiply(
     if (crt_hi_out && crt_lo_out) {
         crt_hi_out->resize(ctx.N);
         crt_lo_out->resize(ctx.N);
-        cudaMemcpy(crt_hi_out->data(), ctx.d_C_hi, ctx.N * sizeof(uint64_t),
-                   cudaMemcpyDeviceToHost);
-        cudaMemcpy(crt_lo_out->data(), ctx.d_C_lo, ctx.N * sizeof(uint64_t),
-                   cudaMemcpyDeviceToHost);
+        CUDA_CHECK(cudaMemcpy(crt_hi_out->data(), ctx.d_C_hi, ctx.N * sizeof(uint64_t),
+                   cudaMemcpyDeviceToHost));
+        CUDA_CHECK(cudaMemcpy(crt_lo_out->data(), ctx.d_C_lo, ctx.N * sizeof(uint64_t),
+                   cudaMemcpyDeviceToHost));
 
         if (prof.on)
-            cudaEventRecord(prof.execute_stop, 0);
+            CUDA_CHECK(cudaEventRecord(prof.execute_stop, 0));
 
         if (prof.on)
             prof.fill(timing);
@@ -892,17 +894,21 @@ void execute_ntt_multiply(
     carry_intra_segment_kernel_u160<<<num_segs, 1, 0, ctx.stream_a>>>(
         ctx.d_C_lo, ctx.d_C_mid, ctx.d_C_hi32, ctx.d_out,
         ctx.d_seg_carry_lo, ctx.d_seg_carry_mid, ctx.d_seg_carry_hi, ctx.N);
+    CUDA_CHECK_KERNEL();
 #else
     carry_intra_segment_kernel<<<num_segs, 1, 0, ctx.stream_a>>>(
         ctx.d_C_hi, ctx.d_C_lo, ctx.d_out, ctx.d_seg_carry, ctx.N);
+    CUDA_CHECK_KERNEL();
 #endif
 
 #if defined(NATIVE_HOST_LIMBS)
     carry_inter_segment_kernel_u160<<<1, 1, 0, ctx.stream_a>>>(
         ctx.d_seg_carry_lo, ctx.d_seg_carry_mid, ctx.d_seg_carry_hi, num_segs);
+    CUDA_CHECK_KERNEL();
 #else
     carry_inter_segment_kernel<<<1, 1, 0, ctx.stream_a>>>(
         ctx.d_seg_carry, num_segs);
+    CUDA_CHECK_KERNEL();
 #endif
 
     for (;;) {
@@ -911,13 +917,15 @@ void execute_ntt_multiply(
         carry_fixup_kernel_u160<<<num_segs, 1, 0, ctx.stream_a>>>(
             ctx.d_out, ctx.d_seg_carry_lo, ctx.d_seg_carry_mid, ctx.d_seg_carry_hi,
             ctx.N, num_segs, ctx.d_carry_escape);
+        CUDA_CHECK_KERNEL();
 #else
         carry_fixup_kernel<<<num_segs, 1, 0, ctx.stream_a>>>(
             ctx.d_out, ctx.d_seg_carry, ctx.N, num_segs, ctx.d_carry_escape);
+        CUDA_CHECK_KERNEL();
 #endif
         int escaped = 0;
-        cudaMemcpyAsync(&escaped, ctx.d_carry_escape, sizeof(int),
-                        cudaMemcpyDeviceToHost, ctx.stream_a);
+        CUDA_CHECK(cudaMemcpyAsync(&escaped, ctx.d_carry_escape, sizeof(int),
+                        cudaMemcpyDeviceToHost, ctx.stream_a));
         cudaStreamSynchronize(ctx.stream_a);
         if (!escaped)
             break;
@@ -929,14 +937,14 @@ void execute_ntt_multiply(
     if (prof.on)
         prof.d2h_timer->tic(0);
 
-    cudaMemcpy(C_out.data(), ctx.d_out,
-            (ctx.N + 1) * sizeof(OutputLimbType), cudaMemcpyDeviceToHost);
+    CUDA_CHECK(cudaMemcpy(C_out.data(), ctx.d_out,
+            (ctx.N + 1) * sizeof(OutputLimbType), cudaMemcpyDeviceToHost));
 
     if (prof.on)
         timing.d2h_ms = prof.d2h_timer->toc(0);
 
     if (prof.on)
-        cudaEventRecord(prof.execute_stop, 0);
+        CUDA_CHECK(cudaEventRecord(prof.execute_stop, 0));
 
     if (prof.on) {
         prof.fill(timing);

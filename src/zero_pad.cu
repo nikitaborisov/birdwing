@@ -1,4 +1,5 @@
 #include "zero_pad.h"
+#include "cuda_check.h"
 
 __global__ void zero_pad_kernel(
     const uint32_t* __restrict__ src,   // always 32-bit input
@@ -21,6 +22,7 @@ void zero_pad_gpu(
     int threads_per_block = 256;
     int blocks = (N + threads_per_block - 1) / threads_per_block;
     zero_pad_kernel<<<blocks, threads_per_block, 0, stream>>>(d_src, d_dst, L, N);
+    CUDA_CHECK_KERNEL();
 }
 
 #if defined(NATIVE_HOST_LIMBS)
@@ -53,6 +55,7 @@ void zero_pad_gpu_u64(
     int blocks = (N + threads_per_block - 1) / threads_per_block;
     zero_pad_kernel_u64<<<blocks, threads_per_block, 0, stream>>>(
         d_src, d_dst, L, N, modulus);
+    CUDA_CHECK_KERNEL();
 }
 
 #endif

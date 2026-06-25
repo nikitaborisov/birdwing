@@ -1,5 +1,6 @@
 #include "crt_gpu.h"
 #include "config.h"
+#include "cuda_check.h"
 #include <cuda_runtime.h>
 #include <cassert>
 #include <cstdio>
@@ -106,16 +107,16 @@ CRTGarnerParams compute_garner_params(const vector<TestDataTypeUint> &primes) {
 
 
 void upload_garner_params(const CRTGarnerParams &params) {
-    cudaMemcpyToSymbol(d_primes,   params.primes,   NUM_MODULI * sizeof(uint64_t));
-    cudaMemcpyToSymbol(d_inv,      params.inv,       NUM_MODULI * sizeof(uint64_t));
-    cudaMemcpyToSymbol(d_M_mod_table, params.M_mod_table, NUM_MODULI * NUM_MODULI * sizeof(uint64_t));
-    cudaMemcpyToSymbol(d_barrett_m, params.barrett_m, NUM_MODULI * sizeof(uint64_t));
+    CUDA_CHECK(cudaMemcpyToSymbol(d_primes,   params.primes,   NUM_MODULI * sizeof(uint64_t)));
+    CUDA_CHECK(cudaMemcpyToSymbol(d_inv,      params.inv,       NUM_MODULI * sizeof(uint64_t)));
+    CUDA_CHECK(cudaMemcpyToSymbol(d_M_mod_table, params.M_mod_table, NUM_MODULI * NUM_MODULI * sizeof(uint64_t)));
+    CUDA_CHECK(cudaMemcpyToSymbol(d_barrett_m, params.barrett_m, NUM_MODULI * sizeof(uint64_t)));
 }
 
 void upload_residue_ptrs(const vector<TestDataTypeUint*> &c_dev) {
     TestDataTypeUint* h_ptrs[NUM_MODULI];
     for (int j = 0; j < NUM_MODULI; j++) h_ptrs[j] = c_dev[j];
-    cudaMemcpyToSymbol(d_residue_ptrs, h_ptrs, NUM_MODULI * sizeof(TestDataTypeUint*));
+    CUDA_CHECK(cudaMemcpyToSymbol(d_residue_ptrs, h_ptrs, NUM_MODULI * sizeof(TestDataTypeUint*)));
 }
 
 // __global__
@@ -284,6 +285,7 @@ void crt_combine_gpu_u160(
     int threads = 256;
     int blocks  = (N + threads - 1) / threads;
     crt_combine_kernel_u160<<<blocks, threads>>>(d_C_lo, d_C_mid, d_C_hi, N);
+    CUDA_CHECK_KERNEL();
     cudaDeviceSynchronize();
 }
 
@@ -298,5 +300,6 @@ void crt_combine_gpu(
     int threads = 256;
     int blocks  = (N + threads - 1) / threads;
     crt_combine_kernel<<<blocks, threads>>>(d_C_hi, d_C_lo, N);
+    CUDA_CHECK_KERNEL();
     cudaDeviceSynchronize();
 }

@@ -10,6 +10,7 @@
 #include <cstring>
 
 #include <algorithm>
+#include "../include/cuda_check.h"
 
 // ---------------- ANSI COLORS ----------------
 #define GREEN_BOLD "\033[1;32m"
@@ -37,8 +38,8 @@ void host_multiply_merge(const vector<uint32_t> &A, const vector<uint32_t> &B, v
 
     uint32_t* a_pinned;
     uint32_t* b_pinned;
-    cudaMallocHost(&a_pinned, L_A * sizeof(uint32_t));
-    cudaMallocHost(&b_pinned, L_B * sizeof(uint32_t));
+    CUDA_CHECK(cudaMallocHost(&a_pinned, L_A * sizeof(uint32_t)));
+    CUDA_CHECK(cudaMallocHost(&b_pinned, L_B * sizeof(uint32_t)));
     memcpy(a_pinned, A.data(), L_A * sizeof(uint32_t));
     memcpy(b_pinned, B.data(), L_B * sizeof(uint32_t));
 
@@ -104,8 +105,8 @@ void host_multiply_merge_native(const vector<uint64_t> &A, const vector<uint64_t
 
     uint64_t* a_pinned;
     uint64_t* b_pinned;
-    cudaMallocHost(&a_pinned, L_A * sizeof(uint64_t));
-    cudaMallocHost(&b_pinned, L_B * sizeof(uint64_t));
+    CUDA_CHECK(cudaMallocHost(&a_pinned, L_A * sizeof(uint64_t)));
+    CUDA_CHECK(cudaMallocHost(&b_pinned, L_B * sizeof(uint64_t)));
     memcpy(a_pinned, A.data(), L_A * sizeof(uint64_t));
     memcpy(b_pinned, B.data(), L_B * sizeof(uint64_t));
 
