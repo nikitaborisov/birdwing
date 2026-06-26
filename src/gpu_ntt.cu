@@ -8,7 +8,7 @@
 #include <memory>
 #include <iostream>
 #include <vector>
-#include <cmath>
+#include <cassert>
 #include <fstream>
 #include <iomanip>
 #include <ctime>
@@ -19,6 +19,12 @@
 
 using namespace std;
 using namespace gpuntt;
+
+static int ilog2_pow2(size_t N)
+{
+    assert(N != 0 && (N & (N - 1)) == 0);
+    return __builtin_ctzll(static_cast<unsigned long long>(N));
+}
 
 #if LIMB_BITS == 64
     typedef Data64 TestDataType;
@@ -255,7 +261,7 @@ NTTPrecomputed precompute_ntt(size_t N, PrecomputeTiming* timing_out) {
 
     NTTPrecomputed pre;
     pre.N    = N;
-    pre.logN = (int)log2((double)N);
+    pre.logN = ilog2_pow2(N);
     pre.gpu_uploaded = false;
 
     pre.params.resize(NUM_MODULI);
@@ -536,11 +542,9 @@ void execute_ntt_multiply(
 
         #if DEBUG
         // compute CPU ntt
-        int logN = log2(static_cast<int>(ctx.N));
-
-        auto factors = generate_factors_for_N(logN);
+        auto factors = generate_factors_for_N(ctx.logN);
         NTTParameters<TestDataType> parameters(
-            logN,
+            ctx.logN,
             factors[i],
             ReductionPolynomial::X_N_minus
         );

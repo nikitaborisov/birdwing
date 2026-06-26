@@ -98,6 +98,69 @@ fix before proceeding.
 
 **Risk:** low.
 
+### 1d. Carry-propagation correctness: consume-on-read + race-free escape (PR #3 + follow-up)
+**Problem:** the multi-pass carry fixup is incorrect at the segment boundary once
+`L > CARRY_SEG`. Two distinct defects:
+
+1. **Double-count (PR #3 fixes this).** The host retry loop (`gpu_ntt.cu:908-924`) re-launches
+   `carry_fixup_kernel` over *all* `num_segs` blocks every pass. Because `seg_carry[seg]` was
+   never cleared after consumption, on pass *k+1* block `seg` re-reads and re-applies the same
+   incoming carry it already added in pass *k*. PR #3 adds a consume-on-read
+   (`seg_carry[seg] = 0` after the load) in both `carry_fixup_kernel` and
+   `carry_fixup_kernel_u160`, plus the u160 early-out (see 2c — now folded in here).
+2. **Lost-carry data race (PR #3 introduces; must fix before merge).** The plain store
+   `seg_carry[seg] = 0` from block `seg+1` races the `atomicAdd(&seg_carry[seg+1], …)` escape
+   write from block `seg` in the *same* launch — they alias the same slot (block `seg`'s
+   carry-*out* == block `seg+1`'s carry-*in*). Interleaving `load(seg+1) → atomicAdd(by seg) →
+   store-0(by seg+1)` clobbers the escaped carry; `escape_flag` is set so another pass runs,
+   but the slot now reads 0 and the carry is **silently lost** → wrong product. Non-atomic
+   store racing a concurrent `atomicAdd` is also UB in CUDA's memory model. This is exactly the
+   cross-segment all-ones regime the fix targets (`test_native_pipeline` injects `UINT64_MAX`
+   at `i%8==2`, `L=1<<12…1<<20`).
+
+**Changes:**
+- **(a) Max-value tests — already landed on the phase1 branch.** Full-width + `UINT64_MAX`/
+  `UINT32_MAX` edge inputs (the 1b work) are what make this boundary bug observable. Keep as
+  the regression gate for 1d; no further action beyond confirming it exercises `L > CARRY_SEG`.
+- **(b) Adopt PR #3's consume-on-read** so a re-launched pass doesn't re-apply an
+  already-consumed carry. Correct in intent; keep it.
+- **(c) Make the escape race-free via ping-pong buffers** (replaces the plain in-place zero):
+  - Double-buffer the segment carries: `seg_carry_in` (read-only this pass) and `seg_carry_out`
+    (zeroed at the top of each pass). Each block reads its incoming carry from `*_in[seg]` and
+    writes any escape to `*_out[seg+1]`. Nothing *reads* `*_out` during the pass, so the escape
+    write has no concurrent reader and no consume-store is needed — the aliasing that caused the
+    race is gone by construction. Swap the buffers between passes (and `cudaMemsetAsync` the new
+    `*_out` to 0).
+  - Apply to both the u128 (`int64_t`) and u160 (`lo/mid/hi`) paths. The u160 case especially
+    benefits: it removes both the three plain zero-stores *and* the torn-read exposure against
+    the non-atomic three-word `atomic_add_seg_u160`.
+  - Requires a second carry buffer in `NTTContext` / `allocate_ntt_context`
+    (`gpu_ntt.cu:425-429`) and a buffer swap + memset in the retry loop (`gpu_ntt.cu:908-924`).
+  - *Minimal alternative if ping-pong is deferred:* at least make the u128 consume atomic —
+    `incoming = (int64_t)atomicExch((unsigned long long*)&seg_carry[seg], 0ULL)` — so exch and
+    the neighbor's atomicAdd serialize. Does **not** cleanly cover u160 (three separate exchs
+    still tear against the multi-word add), so ping-pong is preferred.
+
+**Verify:**
+- `test_carry_prop` and `test_full_multiply` all three widths with full-width inputs, including
+  `L = 1<<16` and `1<<20` (multiple escape passes).
+- GMP oracle asserts (1b) green on the all-ones-run inputs.
+- **Note: `--tool racecheck` does NOT catch this race** (confirmed empirically). racecheck only
+  instruments `__shared__` memory; the `seg_carry[]` hazard is in *global* memory, so the
+  sanitizer stays silent on it regardless of which version is built. There is no off-the-shelf
+  detector for it. Correctness therefore rests on the **ping-pong fix removing the race by
+  construction**, not on a tool gate. As a probabilistic backstop, stress the boundary: many
+  repeated runs of the all-ones-run inputs at `L=1<<20` (forcing multi-pass escape) compared to
+  GMP — but treat a passing stress run as weak evidence only, since the lost-update window is
+  small and scheduling-dependent.
+- *(Separate finding: racecheck currently flags a shared-memory race inside the vendored
+  GPU-NTT kernels — unrelated to `seg_carry[]`. Tracked below; triage independently.)*
+
+**Risk:** medium — concurrency correctness on the boundary path, and **not** sanitizer-covered.
+Primary mitigation is the by-construction ping-pong rewrite plus the full-width GMP oracle;
+review the swap/memset ordering carefully since no tool will catch a regression here. Land
+within Phase 1 (before any perf work) since it's a correctness fix on a path Phase 2a re-tunes.
+
 ---
 
 ## Phase 2 — Kernel launch geometry & stream cleanup (cheap, high-value perf)
@@ -138,13 +201,10 @@ CRT column timing vs baseline.
 
 **Risk:** low–medium (stream ordering). Run under `compute-sanitizer` once (see Phase 5).
 
-### 2c. u160 fixup early-out (review B4)
-`src/carry_prop.cu:194`: `carry_fixup_kernel_u160` loops to `seg_end` unconditionally.
-Add `&& (c_lo || c_mid || c_hi)` to the loop condition (mirror the non-native kernel at line 69).
-
-**Verify:** `test_carry_prop_64bit`, `test_full_multiply_64bit`.
-
-**Risk:** trivial.
+### 2c. u160 fixup early-out (review B4) — folded into 1d
+`carry_fixup_kernel_u160` looped to `seg_end` unconditionally; the `&& (c_lo || c_mid || c_hi)`
+early-out lands as part of PR #3 / Phase 1d (it ships alongside the carry-correctness fix).
+Nothing left to do here — kept as a pointer so the B4 review item is accounted for.
 
 ---
 
@@ -206,6 +266,8 @@ make main_32 main_hybrid main_64bit
 build/test_full_multiply_32 && build/test_full_multiply_hybrid && build/test_full_multiply_64bit
 
 # Memory/race correctness (run at least for Phase 2 & 3)
+# NB: racecheck only sees __shared__ memory. It does NOT cover the 1d seg_carry[]
+# global-memory race — useful for shared-mem hazards (e.g. the GPU-NTT finding below), not that.
 compute-sanitizer --tool memcheck  build/test_full_multiply_64bit
 compute-sanitizer --tool racecheck build/test_full_multiply_64bit
 
@@ -220,9 +282,23 @@ with no regression elsewhere.
 
 ---
 
+## Known external / unresolved issues
+
+- **GPU-NTT shared-memory race (flagged by racecheck).** `compute-sanitizer --tool racecheck`
+  reports a shared-memory data hazard *inside the vendored GPU-NTT kernels* (not our
+  `seg_carry[]` code). Unlike the carry race, this one *is* in racecheck's wheelhouse, so it's a
+  concrete reproducible report. Triage before trusting it as a "clean racecheck" baseline:
+  capture the exact kernel + line from the racecheck output, then determine whether it's a real
+  hazard or a benign warp-synchronous pattern racecheck over-reports (missing `__syncwarp`,
+  intentional same-value writes, etc.). It's upstream code — decide whether to patch the
+  submodule, report upstream, or document as a known false positive. Until resolved, a non-empty
+  racecheck report on the NTT kernels is *expected* and must not be conflated with regressions
+  introduced by Phases 2–3.
+
 ## Suggested PR sequence
 
-1. **PR1 (Phase 1):** error-checking + full-width tests + hygiene. No perf change; makes the
+1. **PR1 (Phase 1):** error-checking + full-width tests + hygiene + carry-propagation
+   correctness (1d, builds on PR #3 with the ping-pong race fix). No perf change; makes the
    rest safe. *Must merge first.*
 2. **PR2 (Phase 2):** carry launch geometry + CRT stream + u160 early-out. Cheap perf wins.
 3. **PR3 (Phase 3):** Barrett reduction. Biggest perf win; gated by PR1's tests.
@@ -235,6 +311,7 @@ with no regression elsewhere.
 | 1a | new `include/cuda_check.h`; `src/{gpu_ntt,crt_gpu,zero_pad,carry_prop}.cu`, `src/host_multiply.cpp` |
 | 1b | `tests/test_full_multiply.cpp` |
 | 1c | `src/gpu_ntt.cu`, `src/crt_gpu.cu`, `src/carry_prop.cu`, `include/gpu_ntt.h` |
+| 1d | `src/carry_prop.cu` (both fixup kernels), `src/gpu_ntt.cu` (retry loop + buffer swap), `include/gpu_ntt.h` (second carry buffer); tests on phase1 branch |
 | 2a | `src/carry_prop.cu`, `src/gpu_ntt.cu` (launch sites) |
 | 2b | `src/crt_gpu.cu`, `include/crt_gpu.h`, `src/gpu_ntt.cu` |
 | 2c | `src/carry_prop.cu` |

@@ -23,7 +23,10 @@ void add128_128(uint64_t &hi, uint64_t &lo, uint64_t b_hi, uint64_t b_lo) {
     hi += b_hi + (lo < old_lo ? 1ULL : 0ULL);
 }
 
-// (hi, lo) * scalar -> (hi, lo), safe because hi < 2^26 and scalar < 2^30
+// (hi, lo) *= scalar, where (hi, lo) is the running Garner prefix product M and
+// scalar is either k_i (< p) or p. Invariant: M = prod(primes[0..j-1]) always fits
+// in 128 bits before each multiply (true for our 3×30-bit and 2×60-bit moduli sets).
+// The final M *= p at j = NUM_MODULI-1 is dead — the loop ends before M is read again.
 __device__ __forceinline__
 void mul128_scalar(uint64_t &hi, uint64_t &lo, uint64_t b)
 {

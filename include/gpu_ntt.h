@@ -53,6 +53,9 @@ struct NTTContext {
     uint64_t* d_seg_carry_aux_mid = nullptr;
     uint32_t* d_seg_carry_aux_hi = nullptr;
 #else
+    // Per-segment carry for the u128 fixup path (Pass 1–3). int64_t is wide enough
+    // while min(L_A, L_B) <= max_limb_count_for_int64_segment_carry(); hybrid NTT/CRT
+    // allow L=2^32 but segment carries overflow int64 above L=2^31 (see ntt_limits).
     int64_t*    d_seg_carry = nullptr;
     int64_t*    d_seg_carry_aux = nullptr;
 #endif

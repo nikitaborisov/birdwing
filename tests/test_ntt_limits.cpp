@@ -145,13 +145,17 @@ static void test_configured_limits()
 #elif LIMB_BITS == 64
     check_eq_int(max_supported_logN(), 33, "max_supported_logN()==33");
     check_eq_u64(max_supported_N(), size_t(1) << 33, "max_supported_N()==2^33");
-    check_eq_u64(max_supported_limb_count(), size_t(1) << 32,
-                 "max_supported_limb_count()==2^32");
+    check_eq_u64(max_supported_limb_count(), size_t(1) << 31,
+                 "max_supported_limb_count()==2^31 (int64 carry cap)");
+    check_eq_u64(max_limb_count_for_int64_segment_carry(), size_t(1) << 31,
+                 "max_limb_count_for_int64_segment_carry()==2^31");
 #else
     check_eq_int(max_supported_logN(), 23, "max_supported_logN()==23");
     check_eq_u64(max_supported_N(), size_t(1) << 23, "max_supported_N()==2^23");
     check_eq_u64(max_supported_limb_count(), size_t(1) << 22,
                  "max_supported_limb_count()==2^22");
+    check(max_limb_count_for_int64_segment_carry() >= max_supported_limb_count(),
+          "int64 segment-carry range covers configured Lmax");
 #endif
 }
 
@@ -212,6 +216,10 @@ static void test_multiply_size_supported()
     const size_t L_bad = size_t(1) << 33;
     check(!multiply_size_supported(L_bad, L_bad, &why),
           "L=2^33 square multiply rejected (needs N=2^34)");
+    check(!multiply_size_supported(size_t(1) << 32, size_t(1) << 32, &why),
+          "L=2^32 square multiply rejected (int64 segment carry)");
+    check(multiply_size_supported(size_t(1) << 31, size_t(1) << 31, &why),
+          "L=2^31 square multiply supported");
 #else
     const size_t L_bad = size_t(1) << 23;
     check(!multiply_size_supported(L_bad, L_bad, &why),
@@ -302,8 +310,8 @@ static void test_l_arg_convention()
     const int ok_arg = 30;
     const int bad_arg = 32;
 #elif LIMB_BITS == 64
-    const int ok_arg = 32;
-    const int bad_arg = 33;
+    const int ok_arg = 31;
+    const int bad_arg = 32;
 #else
     const int ok_arg = 22;
     const int bad_arg = 23;

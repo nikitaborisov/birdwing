@@ -28,6 +28,12 @@ __global__ void carry_intra_segment_kernel(
         carry  = temp >> OUTPUT_LIMB_BITS;
     }
     seg_carry[blockIdx.x] = (int64_t)carry;
+#if DEBUG
+    if (carry > (__int128)INT64_MAX || carry < 0) {
+        printf("carry_intra_segment: seg=%d carry overflow\n", blockIdx.x);
+        __trap();
+    }
+#endif
 }
 
 // Pass 2: serial scan over just (N/CARRY_SEG) carry values — tiny, fast.

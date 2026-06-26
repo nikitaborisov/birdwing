@@ -14,6 +14,10 @@ size_t max_supported_N();
 // Max operand limb count L (square inputs) s.t. both NTT and CRT bounds hold.
 size_t max_supported_limb_count();
 
+// Max L for which worst-case int64 segment carries in carry_fixup stay in range.
+// Native (u160) path returns SIZE_MAX. Hybrid caps at 2^31 (below NTT/CRT L=2^32).
+size_t max_limb_count_for_int64_segment_carry();
+
 size_t padded_ntt_size(size_t L_A, size_t L_B);
 
 // N must be a power of two and within per-modulus root-of-unity order.

@@ -3,6 +3,7 @@
 #include <algorithm>
 #include <cmath>
 #include <cstdlib>
+#include <climits>
 #include <iostream>
 #include <limits>
 
@@ -173,6 +174,49 @@ static size_t max_limb_count_by_crt()
     return static_cast<size_t>(max_L);
 }
 
+#if !defined(NATIVE_HOST_LIMBS)
+static unsigned __int128 worst_case_int64_segment_carry(size_t L)
+{
+    const unsigned __int128 max_sq =
+        (unsigned __int128)OUTPUT_LIMB_MASK * OUTPUT_LIMB_MASK;
+    const unsigned __int128 coeff = (unsigned __int128)L * max_sq;
+
+    unsigned __int128 carry = 0;
+    for (size_t i = 0; i < CARRY_SEG; i++) {
+        const unsigned __int128 t = coeff + carry;
+        carry = t >> OUTPUT_LIMB_BITS;
+    }
+    return carry;
+}
+#endif
+
+size_t max_limb_count_for_int64_segment_carry()
+{
+#if defined(NATIVE_HOST_LIMBS)
+    return numeric_limits<size_t>::max();
+#else
+    static const size_t kMax = []() {
+        size_t lo = 1;
+        size_t hi = size_t(1) << 33;
+        while (lo < hi) {
+            const size_t mid = lo + (hi - lo + 1) / 2;
+            if (worst_case_int64_segment_carry(mid) <=
+                (unsigned __int128)INT64_MAX) {
+                lo = mid;
+            } else {
+                hi = mid - 1;
+            }
+        }
+        return lo;
+    }();
+    return kMax;
+#endif
+}
+
+#if !defined(NATIVE_HOST_LIMBS)
+static_assert(CARRY_SEG > 0, "CARRY_SEG must be positive");
+#endif
+
 size_t max_supported_limb_count()
 {
     const int max_log = max_supported_logN();
@@ -180,7 +224,12 @@ size_t max_supported_limb_count()
         return 0;
 
     const size_t max_by_ntt = size_t(1) << (max_log - 1);
-    return min(max_by_ntt, max_limb_count_by_crt());
+    const size_t max_by_crt = max_limb_count_by_crt();
+#if defined(NATIVE_HOST_LIMBS)
+    return min(max_by_ntt, max_by_crt);
+#else
+    return min({max_by_ntt, max_by_crt, max_limb_count_for_int64_segment_carry()});
+#endif
 }
 
 bool crt_coefficient_bound_satisfied(size_t L_A, size_t L_B, string* why)
@@ -250,7 +299,22 @@ bool multiply_size_supported(size_t L_A, size_t L_B, string* why)
     if (!ntt_size_supported(N, why))
         return false;
 
-    return crt_coefficient_bound_satisfied(L_A, L_B, why);
+    if (!crt_coefficient_bound_satisfied(L_A, L_B, why))
+        return false;
+
+#if !defined(NATIVE_HOST_LIMBS)
+    const size_t L = min(L_A, L_B);
+    if (L > max_limb_count_for_int64_segment_carry()) {
+        if (why) {
+            *why = "L=" + to_string(L) +
+                   " exceeds int64 segment-carry range (max L=" +
+                   to_string(max_limb_count_for_int64_segment_carry()) + ")";
+        }
+        return false;
+    }
+#endif
+
+    return true;
 }
 
 void ensure_ntt_size_supported(size_t N)
