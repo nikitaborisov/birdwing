@@ -2,3 +2,4 @@ build/
 results/
 *.csv
 *.png
+__pycache__/

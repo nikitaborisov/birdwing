@@ -152,6 +152,7 @@ struct StageProfiler {
         if (!on)
             return;
 
+        out.h2d_a_ms = elapsed_ms(h2d_start, h2d_stop_a);
         out.h2d_ms = critical_path_ms(h2d_start, h2d_stop_a, h2d_stop_b);
         out.fwd_pad_ntt_a_ms = elapsed_ms(fwd_start_a, fwd_stop_a);
         out.fwd_pad_ntt_b_ms = elapsed_ms(fwd_start_b, fwd_stop_b);
@@ -897,6 +898,8 @@ void execute_ntt_multiply(
         prof.carry_timer->tic(ctx.stream_a);
 
     size_t num_segs = (ctx.N + CARRY_SEG - 1) / CARRY_SEG;
+    int carry_grid, carry_block;
+    carry_launch_dims(num_segs, carry_grid, carry_block);
 
 #if defined(NATIVE_HOST_LIMBS)
     uint64_t* carry_in_lo  = ctx.d_seg_carry_lo;
@@ -911,12 +914,12 @@ void execute_ntt_multiply(
 #endif
 
 #if defined(NATIVE_HOST_LIMBS)
-    carry_intra_segment_kernel_u160<<<num_segs, 1, 0, ctx.stream_a>>>(
+    carry_intra_segment_kernel_u160<<<carry_grid, carry_block, 0, ctx.stream_a>>>(
         ctx.d_C_lo, ctx.d_C_mid, ctx.d_C_hi32, ctx.d_out,
         carry_in_lo, carry_in_mid, carry_in_hi, ctx.N);
     CUDA_CHECK_KERNEL();
 #else
-    carry_intra_segment_kernel<<<num_segs, 1, 0, ctx.stream_a>>>(
+    carry_intra_segment_kernel<<<carry_grid, carry_block, 0, ctx.stream_a>>>(
         ctx.d_C_hi, ctx.d_C_lo, ctx.d_out, carry_in, ctx.N);
     CUDA_CHECK_KERNEL();
 #endif
@@ -937,14 +940,14 @@ void execute_ntt_multiply(
         cudaMemsetAsync(carry_out_lo, 0, num_segs * sizeof(uint64_t), ctx.stream_a);
         cudaMemsetAsync(carry_out_mid, 0, num_segs * sizeof(uint64_t), ctx.stream_a);
         cudaMemsetAsync(carry_out_hi, 0, num_segs * sizeof(uint32_t), ctx.stream_a);
-        carry_fixup_kernel_u160<<<num_segs, 1, 0, ctx.stream_a>>>(
+        carry_fixup_kernel_u160<<<carry_grid, carry_block, 0, ctx.stream_a>>>(
             ctx.d_out, carry_in_lo, carry_in_mid, carry_in_hi,
             carry_out_lo, carry_out_mid, carry_out_hi,
             ctx.N, num_segs, ctx.d_carry_escape);
         CUDA_CHECK_KERNEL();
 #else
         cudaMemsetAsync(carry_out, 0, num_segs * sizeof(int64_t), ctx.stream_a);
-        carry_fixup_kernel<<<num_segs, 1, 0, ctx.stream_a>>>(
+        carry_fixup_kernel<<<carry_grid, carry_block, 0, ctx.stream_a>>>(
             ctx.d_out, carry_in, carry_out, ctx.N, num_segs, ctx.d_carry_escape);
         CUDA_CHECK_KERNEL();
 #endif
@@ -993,7 +996,7 @@ void execute_ntt_multiply(
     ofstream file("ntt_timing.csv", ios::app);
 
     if (!header_written) {
-        file << "N,L_A,L_B,INGRESS_FWD,H2D,FWD_PAD_NTT,FWD_A,FWD_B,MUL,INTT,CRT,CARRY,D2H,TOTAL\n";
+        file << "N,L_A,L_B,INGRESS_FWD,H2D_A,H2D,FWD_PAD_NTT,FWD_A,FWD_B,MUL,INTT,CRT,CARRY,D2H,TOTAL\n";
         header_written = true;
     }
 
@@ -1001,6 +1004,7 @@ void execute_ntt_multiply(
         << ctx.L_A << ","
         << ctx.L_B << ","
         << timing.ingress_fwd_ms << ","
+        << timing.h2d_a_ms << ","
         << timing.h2d_ms << ","
         << timing.fwd_pad_ntt_ms << ","
         << timing.fwd_pad_ntt_a_ms << ","

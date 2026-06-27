@@ -93,6 +93,7 @@ struct SetupUploadTiming {
 
 struct NTTTiming {
 	float ingress_fwd_ms = 0.0f;
+	float h2d_a_ms = 0.0f;
 	float h2d_ms = 0.0f;
 	float fwd_pad_ntt_ms = 0.0f;
 	float fwd_pad_ntt_a_ms = 0.0f;

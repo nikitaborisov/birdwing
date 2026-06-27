@@ -213,6 +213,7 @@ struct BenchRow {
 
     TimingStats execute_total{};
     TimingStats ingress_fwd{};
+    TimingStats h2d_a{};
     TimingStats h2d{};
     TimingStats fwd_pad_ntt{};
     TimingStats fwd_pad_ntt_a{};
@@ -372,6 +373,7 @@ static BenchRow benchmark_L(size_t L_arg, int warmup, int iters, uint64_t seed)
     row.teardown = teardown;
     row.execute_total = compute_stats(execute_samples);
     row.ingress_fwd = compute_stats_field(stage_samples, &NTTTiming::ingress_fwd_ms);
+    row.h2d_a = compute_stats_field(stage_samples, &NTTTiming::h2d_a_ms);
     row.h2d = compute_stats_field(stage_samples, &NTTTiming::h2d_ms);
     row.fwd_pad_ntt = compute_stats_field(stage_samples, &NTTTiming::fwd_pad_ntt_ms);
     row.fwd_pad_ntt_a = compute_stats_field(stage_samples, &NTTTiming::fwd_pad_ntt_a_ms);
@@ -400,7 +402,7 @@ static void write_csv(const string& path, const vector<BenchRow>& rows, bool app
             << "pre_factors_ms,pre_params_ms,pre_twiddle_host_ms,pre_garner_host_ms,"
             << "upload_twiddle_ms,upload_mod_constants_ms,upload_garner_ms,"
             << "teardown_free_ctx_ms,teardown_free_pre_ms,teardown_free_pinned_ms,"
-            << "ingress_fwd_mean_ms,h2d_mean_ms,fwd_pad_ntt_mean_ms,fwd_pad_ntt_a_mean_ms,fwd_pad_ntt_b_mean_ms,"
+            << "ingress_fwd_mean_ms,h2d_a_mean_ms,h2d_mean_ms,fwd_pad_ntt_mean_ms,fwd_pad_ntt_a_mean_ms,fwd_pad_ntt_b_mean_ms,"
             << "mul_mean_ms,intt_mean_ms,crt_mean_ms,carry_mean_ms,d2h_mean_ms\n";
     }
     csv << fixed << setprecision(6);
@@ -434,6 +436,7 @@ static void write_csv(const string& path, const vector<BenchRow>& rows, bool app
             << row.teardown.free_pre_ms << ","
             << row.teardown.free_pinned_ms << ","
             << row.ingress_fwd.mean_ms << ","
+            << row.h2d_a.mean_ms << ","
             << row.h2d.mean_ms << ","
             << row.fwd_pad_ntt.mean_ms << ","
             << row.fwd_pad_ntt_a.mean_ms << ","
@@ -475,7 +478,8 @@ static void print_row(const BenchRow& row)
          << "  min=" << setw(8) << row.execute_total.min_ms
          << "  max=" << setw(8) << row.execute_total.max_ms << " ms\n";
     cout << "    ingress_fwd=" << row.ingress_fwd.mean_ms
-         << " (h2d=" << row.h2d.mean_ms
+         << " (h2d_a=" << row.h2d_a.mean_ms
+         << " h2d=" << row.h2d.mean_ms
          << " fwd=" << row.fwd_pad_ntt.mean_ms
          << " a=" << row.fwd_pad_ntt_a.mean_ms
          << " b=" << row.fwd_pad_ntt_b.mean_ms << " — streams overlap, use ingress_fwd)"

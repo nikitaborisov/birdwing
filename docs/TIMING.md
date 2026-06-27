@@ -136,9 +136,13 @@ and keep host precompute for another upload cycle at the same `N`.
 
 | `NTTTiming` field | Stackable? |
 |-------------------|------------|
-| `ingress_fwd_ms` | Yes |
+| `ingress_fwd_ms` | Yes (wall-clock ingress phase) |
+| `h2d_a_ms` | Yes (A transfer only; last clean checkpoint before stream overlap) |
 | `pointwise_mul_ms` … `d2h_ms` | Yes |
 | `h2d_ms`, `fwd_pad_ntt_*` | Diagnostics only (streams overlap) |
+
+`ingress_fwd_ms` ≈ `h2d_a_ms` + overlapped fwd pad+NTT on the critical path. After
+`h2d_stop_a`, stream A runs zero-pad+NTT while stream B may still be copying.
 
 ## Benchmarks and CSV
 

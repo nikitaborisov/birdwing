@@ -8,6 +8,7 @@ import csv
 import math
 from collections import defaultdict
 from pathlib import Path
+from typing import Callable
 
 import matplotlib.pyplot as plt
 import numpy as np
@@ -51,7 +52,8 @@ def series_label(row: dict) -> str:
     return f"{row['limb_bits']}-bit"
 
 EXECUTE_STACK_LAYERS: tuple[tuple[str, str], ...] = (
-    ("ingress_fwd_mean_ms", "H2D + fwd pad+NTT"),
+    ("h2d_a_mean_ms", "H2D (A)"),
+    ("ingress_fwd_overlap_mean_ms", "fwd pad+NTT (+ overlap)"),
     ("mul_mean_ms", "Pointwise mul"),
     ("intt_mean_ms", "INTT"),
     ("crt_mean_ms", "CRT"),
@@ -61,6 +63,7 @@ EXECUTE_STACK_LAYERS: tuple[tuple[str, str], ...] = (
 
 # Diagnostic columns (overlapping across streams — not stacked together).
 EXECUTE_DIAG_COLUMNS = frozenset({
+    "ingress_fwd_mean_ms",
     "h2d_mean_ms",
     "fwd_pad_ntt_mean_ms",
     "fwd_pad_ntt_a_mean_ms",
@@ -118,6 +121,13 @@ def derive_ingress_fwd(row: dict) -> float:
 def enrich_breakdown_row(entry: dict) -> None:
     if "ingress_fwd_mean_ms" not in entry:
         entry["ingress_fwd_mean_ms"] = derive_ingress_fwd(entry)
+    ingress = float(entry["ingress_fwd_mean_ms"])
+    h2d_a = float(entry.get("h2d_a_mean_ms", 0.0))
+    if h2d_a > 0.0:
+        entry["ingress_fwd_overlap_mean_ms"] = max(ingress - h2d_a, 0.0)
+    else:
+        entry["h2d_a_mean_ms"] = 0.0
+        entry["ingress_fwd_overlap_mean_ms"] = ingress
     # Legacy CSV: single precompute total without stage columns.
     if "pre_factors_ms" not in entry and "setup_precompute_ms" in entry:
         entry["pre_twiddle_host_ms"] = float(entry["setup_precompute_ms"])
@@ -292,6 +302,64 @@ def stacked_output_path(total_output: Path) -> Path:
     return total_output.with_name(f"{total_output.stem}_stacked{total_output.suffix}")
 
 
+def infra_total_ms(row: dict) -> float:
+    """Setup + teardown wall time (INFRA_LAYERS), excluding precompute."""
+    return sum(max(float(row.get(col, 0.0)), 0.0) for col, _ in INFRA_LAYERS)
+
+
+def plot_time_series(
+    ax: plt.Axes,
+    groups: dict[str, list[dict]],
+    *,
+    x_key: str,
+    y_values: Callable[[dict], float],
+    error_mode: str | None,
+    ylabel: str,
+    show_legend: bool,
+    print_stats: bool = False,
+) -> list[float]:
+    """Plot one timing series per group; return all x values for axis config."""
+    ax.set_yscale("log")
+    all_x: list[float] = []
+
+    for label, series in sorted(groups.items()):
+        x = np.array([r[x_key] for r in series], dtype=float)
+        all_x.extend(x.tolist())
+        y = np.array([y_values(r) for r in series], dtype=float)
+
+        if print_stats:
+            print(label + ":")
+            if error_mode is not None:
+                lower, upper = error_intervals(series, error_mode)
+                print_variability(series, error_mode)
+
+        if error_mode is not None:
+            lower, upper = error_intervals(series, error_mode)
+            if error_mode == "band":
+                ax.fill_between(x, lower, upper, alpha=0.25, label=label)
+                ax.plot(x, y, marker="o", linewidth=1.5)
+            else:
+                yerr = np.vstack([y - lower, upper - y])
+                ax.errorbar(
+                    x, y,
+                    yerr=yerr,
+                    marker="o",
+                    capsize=4,
+                    capthick=1.2,
+                    elinewidth=1.2,
+                    linewidth=1.5,
+                    label=label,
+                )
+        else:
+            ax.plot(x, y, marker="o", linewidth=1.5, label=label)
+
+    ax.set_ylabel(ylabel)
+    ax.grid(True, which="both", linestyle="--", alpha=0.4)
+    if show_legend and len(groups) > 1:
+        ax.legend(loc="upper left")
+    return all_x
+
+
 def plot_total(
     rows: list[dict],
     *,
@@ -300,63 +368,82 @@ def plot_total(
     output: Path | None,
     title: str | None,
     show: bool,
+    has_breakdown: bool,
 ) -> None:
     groups = group_rows(rows, x_key)
-
-    fig, ax = plt.subplots(figsize=(8, 5))
-    ax.set_yscale("log")
-
-    all_x: list[float] = []
-
-    for label, series in sorted(groups.items()):
-        x = np.array([r[x_key] for r in series], dtype=float)
-        all_x.extend(x.tolist())
-        y = np.array([r["mean_ms"] for r in series], dtype=float)
-        lower, upper = error_intervals(series, error_mode)
-
-        print(label + ":")
-        print_variability(series, error_mode)
-
-        if error_mode == "band":
-            ax.fill_between(x, lower, upper, alpha=0.25, label=label)
-            ax.plot(x, y, marker="o", linewidth=1.5)
-        else:
-            yerr = np.vstack([y - lower, upper - y])
-            ax.errorbar(
-                x, y,
-                yerr=yerr,
-                marker="o",
-                capsize=4,
-                capthick=1.2,
-                elinewidth=1.2,
-                linewidth=1.5,
-                label=label,
-            )
-
     x_labels = X_AXIS_LABELS
     error_labels = {
         "stddev": "mean ± stddev",
         "minmax": "min – max",
         "band": "mean ± stddev (shaded)",
     }
-    configure_xaxis(ax, x_key, np.array(all_x))
-    ax.set_xlabel(x_labels.get(x_key, x_key))
-    ax.set_ylabel("Execute time (ms)")
-    ax.set_title(title or "GPU full multiply — execute time")
-    ax.grid(True, which="both", linestyle="--", alpha=0.4)
 
-    subtitle = error_labels[error_mode]
-    ax.text(
-        0.98, 0.02, subtitle,
-        transform=ax.transAxes,
+    if has_breakdown:
+        fig, (ax_exec, ax_infra) = plt.subplots(
+            2, 1,
+            figsize=(8, 8),
+            sharex=True,
+            gridspec_kw={"height_ratios": [3, 2]},
+        )
+        axes = (ax_exec, ax_infra)
+    else:
+        fig, ax_exec = plt.subplots(figsize=(8, 5))
+        axes = (ax_exec,)
+
+    all_x = plot_time_series(
+        ax_exec,
+        groups,
+        x_key=x_key,
+        y_values=lambda r: r["mean_ms"],
+        error_mode=error_mode,
+        ylabel="Multiply (ms)",
+        show_legend=not has_breakdown,
+        print_stats=True,
+    )
+    ax_exec.set_title(title or "GPU full multiply — timing")
+    ax_exec.text(
+        0.98, 0.02, error_labels[error_mode],
+        transform=ax_exec.transAxes,
         fontsize=9,
         alpha=0.7,
         verticalalignment="bottom",
         horizontalalignment="right",
     )
+    ax_exec.text(
+        0.02, 0.98,
+        "Multiply bucket — per-iteration mean.",
+        transform=ax_exec.transAxes,
+        fontsize=8,
+        alpha=0.8,
+        verticalalignment="top",
+    )
 
-    if len(groups) > 1:
-        ax.legend(loc="upper left")
+    if has_breakdown:
+        infra_x = plot_time_series(
+            ax_infra,
+            groups,
+            x_key=x_key,
+            y_values=infra_total_ms,
+            error_mode=None,
+            ylabel="Setup / teardown (ms)",
+            show_legend=True,
+        )
+        all_x.extend(infra_x)
+        ax_infra.text(
+            0.02, 0.98,
+            "Setup / teardown — once per L (amortize over many multiplies at same size).",
+            transform=ax_infra.transAxes,
+            fontsize=8,
+            alpha=0.8,
+            verticalalignment="top",
+        )
+        ax_infra.set_xlabel(x_labels.get(x_key, x_key))
+    else:
+        ax_exec.set_xlabel(x_labels.get(x_key, x_key))
+
+    configure_xaxis(axes[-1], x_key, np.array(all_x))
+    if has_breakdown:
+        ax_exec.tick_params(axis="x", labelbottom=False)
 
     fig.tight_layout()
 
@@ -619,7 +706,7 @@ def main() -> None:
         "-o", "--output",
         type=Path,
         default=None,
-        help="Total-timing image path (default: <csv>.png); "
+        help="Main plot image path (default: <csv>.png); "
              "stacked breakdown -> <stem>_stacked.png",
     )
     parser.add_argument(
@@ -673,6 +760,7 @@ def main() -> None:
         output=total_output,
         title=args.title,
         show=args.show,
+        has_breakdown=has_breakdown,
     )
 
     if args.no_stacked:
