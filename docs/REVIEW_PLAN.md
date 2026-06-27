@@ -167,15 +167,25 @@ within Phase 1 (before any perf work) since it's a correctness fix on a path Pha
 
 Land after Phase 1 so correctness is gated.
 
-### 2a. Carry kernels: one thread per segment, packed blocks (review B2)
+### 2a. Carry kernels: one thread per segment, adaptive packed blocks (review B2)
 **Problem:** all carry kernels launch `<<<num_segs, 1>>>` (one thread/block; 31/32 of each
-warp idle). `src/gpu_ntt.cu:892,896,901,904,911,915`.
+warp idle). `src/gpu_ntt.cu` carry launch sites.
 
-**Change:** keep the per-segment serial scan, but map one thread per segment:
-- Launch `<<<ceil(num_segs/256), 256>>>`; inside, `seg = blockIdx.x*blockDim.x + threadIdx.x;
-  if (seg >= num_segs) return;` (replaces `seg = blockIdx.x` and the `threadIdx.x != 0` guard).
+**Change:** keep the per-segment serial scan, but map one thread per segment with adaptive
+launch geometry via `carry_launch_dims()` in `include/carry_prop.h`:
+- `grid_dim  = min(num_segs, max(64, num_segs / 512))`
+- `block_dim = ceil(num_segs / grid_dim)`
+- Inside the kernel: `seg = blockIdx.x * blockDim.x + threadIdx.x; if (seg >= num_segs) return;`
+  (replaces `seg = blockIdx.x` and the `threadIdx.x != 0` guard).
+- Small `num_segs` (< 64): degenerates to `<<<num_segs, 1>>>` — same as baseline.
+- Medium `num_segs`: `<<<64, 2..16>>>` — fills SMs without oversized blocks.
+- Large `num_segs`: `<<<64, 32..128>>>` — warp parallelism within each block.
 - Apply to intra / fixup (both `_u160` and non-native variants) in `src/carry_prop.cu`.
 - The inter-segment kernel is a single serial scan — leave as `<<<1,1>>>`.
+
+**Benchmarked (vs `results/post_phase1.csv`):** fixed `block_dim=256` and `block_dim=32` both
+regressed carry at medium L; adaptive wins carry on 24/33 rows (−17% geo-mean), total pipeline
+−0.7% geo-mean. See `results/carry_complex_schedule.csv`.
 
 **Verify:** `test_carry_prop` all 3 widths (this test directly targets these kernels);
 then full-multiply all 3 widths; compare `CARRY` column in `ntt_timing.csv` vs baseline.
@@ -312,7 +322,7 @@ with no regression elsewhere.
 | 1b | `tests/test_full_multiply.cpp` |
 | 1c | `src/gpu_ntt.cu`, `src/crt_gpu.cu`, `src/carry_prop.cu`, `include/gpu_ntt.h` |
 | 1d | `src/carry_prop.cu` (both fixup kernels), `src/gpu_ntt.cu` (retry loop + buffer swap), `include/gpu_ntt.h` (second carry buffer); tests on phase1 branch |
-| 2a | `src/carry_prop.cu`, `src/gpu_ntt.cu` (launch sites) |
+| 2a | `include/carry_prop.h` (`carry_launch_dims`), `src/carry_prop.cu`, `src/gpu_ntt.cu` (launch sites) |
 | 2b | `src/crt_gpu.cu`, `include/crt_gpu.h`, `src/gpu_ntt.cu` |
 | 2c | `src/carry_prop.cu` |
 | 3 | new `include/barrett.cuh`; `src/gpu_ntt.cu` (pointwise), `src/crt_gpu.cu` (mulmod64, barrett_m) |

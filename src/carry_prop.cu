@@ -12,9 +12,11 @@ __global__ void carry_intra_segment_kernel(
     int64_t*          __restrict__ seg_carry,
     size_t N)
 {
-    if (threadIdx.x != 0) return;
+    size_t seg = (size_t)blockIdx.x * blockDim.x + threadIdx.x;
+    size_t num_segs = (N + CARRY_SEG - 1) / CARRY_SEG;
+    if (seg >= num_segs) return;
 
-    size_t seg_start = (size_t)blockIdx.x * CARRY_SEG;
+    size_t seg_start = seg * CARRY_SEG;
     size_t seg_end   = min(seg_start + CARRY_SEG, N);
 
     __int128 carry = 0;
@@ -27,10 +29,10 @@ __global__ void carry_intra_segment_kernel(
         out[i] = limb;
         carry  = temp >> OUTPUT_LIMB_BITS;
     }
-    seg_carry[blockIdx.x] = (int64_t)carry;
+    seg_carry[seg] = (int64_t)carry;
 #if DEBUG
     if (carry > (__int128)INT64_MAX || carry < 0) {
-        printf("carry_intra_segment: seg=%d carry overflow\n", blockIdx.x);
+        printf("carry_intra_segment: seg=%zu carry overflow\n", seg);
         __trap();
     }
 #endif
@@ -67,9 +69,9 @@ __global__ void carry_fixup_kernel(
     size_t num_segs,
     int*              __restrict__ escape_flag)
 {
-    if (threadIdx.x != 0) return;
+    size_t seg = (size_t)blockIdx.x * blockDim.x + threadIdx.x;
+    if (seg >= num_segs) return;
 
-    size_t seg       = blockIdx.x;
     size_t seg_start = seg * CARRY_SEG;
     size_t seg_end   = min(seg_start + CARRY_SEG, N);
 
@@ -112,9 +114,11 @@ __global__ void carry_intra_segment_kernel_u160(
     uint32_t*         __restrict__ seg_carry_hi,
     size_t N)
 {
-    if (threadIdx.x != 0) return;
+    size_t seg = (size_t)blockIdx.x * blockDim.x + threadIdx.x;
+    size_t num_segs = (N + CARRY_SEG - 1) / CARRY_SEG;
+    if (seg >= num_segs) return;
 
-    size_t seg_start = (size_t)blockIdx.x * CARRY_SEG;
+    size_t seg_start = seg * CARRY_SEG;
     size_t seg_end   = min(seg_start + CARRY_SEG, N);
 
     uint64_t c_lo = 0, c_mid = 0;
@@ -131,9 +135,9 @@ __global__ void carry_intra_segment_kernel_u160(
         c_mid = (uint64_t)hi;
         c_hi = 0;
     }
-    seg_carry_lo[blockIdx.x]  = c_lo;
-    seg_carry_mid[blockIdx.x] = c_mid;
-    seg_carry_hi[blockIdx.x]  = c_hi;
+    seg_carry_lo[seg]  = c_lo;
+    seg_carry_mid[seg] = c_mid;
+    seg_carry_hi[seg]  = c_hi;
 }
 
 __global__ void carry_inter_segment_kernel_u160(
@@ -173,9 +177,9 @@ __global__ void carry_fixup_kernel_u160(
     size_t num_segs,
     int*              __restrict__ escape_flag)
 {
-    if (threadIdx.x != 0) return;
+    size_t seg = (size_t)blockIdx.x * blockDim.x + threadIdx.x;
+    if (seg >= num_segs) return;
 
-    size_t seg       = blockIdx.x;
     size_t seg_start = seg * CARRY_SEG;
     size_t seg_end   = min(seg_start + CARRY_SEG, N);
 

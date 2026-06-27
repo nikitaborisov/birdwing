@@ -51,6 +51,8 @@ static vector<OutputLimbType> run_carry_prop_gpu(
     cudaMemset(d_out, 0, N * sizeof(OutputLimbType));
 
     size_t num_segs = (N + CARRY_SEG - 1) / CARRY_SEG;
+    int carry_grid, carry_block;
+    carry_launch_dims(num_segs, carry_grid, carry_block);
     int64_t* d_seg_carry;
     int64_t* d_seg_carry_aux;
     cudaMalloc(&d_seg_carry, num_segs * sizeof(int64_t));
@@ -59,7 +61,7 @@ static vector<OutputLimbType> run_carry_prop_gpu(
     int64_t* carry_in = d_seg_carry;
     int64_t* carry_out = d_seg_carry_aux;
 
-    carry_intra_segment_kernel<<<num_segs, 1>>>(
+    carry_intra_segment_kernel<<<carry_grid, carry_block>>>(
         d_C_hi, d_C_lo, d_out, carry_in, N);
 
     carry_inter_segment_kernel<<<1, 1>>>(carry_in, num_segs);
@@ -69,7 +71,7 @@ static vector<OutputLimbType> run_carry_prop_gpu(
     for (;;) {
         cudaMemset(d_escape, 0, sizeof(int));
         cudaMemset(carry_out, 0, num_segs * sizeof(int64_t));
-        carry_fixup_kernel<<<num_segs, 1>>>(
+        carry_fixup_kernel<<<carry_grid, carry_block>>>(
             d_out, carry_in, carry_out, N, num_segs, d_escape);
         int escaped = 0;
         cudaMemcpy(&escaped, d_escape, sizeof(int), cudaMemcpyDeviceToHost);
@@ -258,6 +260,8 @@ static vector<OutputLimbType> run_carry_prop_gpu_u160(
     cudaMemset(d_out, 0, N * sizeof(OutputLimbType));
 
     size_t num_segs = (N + CARRY_SEG - 1) / CARRY_SEG;
+    int carry_grid, carry_block;
+    carry_launch_dims(num_segs, carry_grid, carry_block);
     uint64_t *d_seg_carry_lo, *d_seg_carry_mid, *d_seg_carry_aux_lo, *d_seg_carry_aux_mid;
     uint32_t *d_seg_carry_hi, *d_seg_carry_aux_hi;
     cudaMalloc(&d_seg_carry_lo, num_segs * sizeof(uint64_t));
@@ -274,7 +278,7 @@ static vector<OutputLimbType> run_carry_prop_gpu_u160(
     uint64_t* carry_out_mid = d_seg_carry_aux_mid;
     uint32_t* carry_out_hi  = d_seg_carry_aux_hi;
 
-    carry_intra_segment_kernel_u160<<<num_segs, 1>>>(
+    carry_intra_segment_kernel_u160<<<carry_grid, carry_block>>>(
         d_C_lo, d_C_mid, d_C_hi, d_out,
         carry_in_lo, carry_in_mid, carry_in_hi, N);
     carry_inter_segment_kernel_u160<<<1, 1>>>(
@@ -287,7 +291,7 @@ static vector<OutputLimbType> run_carry_prop_gpu_u160(
         cudaMemset(carry_out_lo, 0, num_segs * sizeof(uint64_t));
         cudaMemset(carry_out_mid, 0, num_segs * sizeof(uint64_t));
         cudaMemset(carry_out_hi, 0, num_segs * sizeof(uint32_t));
-        carry_fixup_kernel_u160<<<num_segs, 1>>>(
+        carry_fixup_kernel_u160<<<carry_grid, carry_block>>>(
             d_out, carry_in_lo, carry_in_mid, carry_in_hi,
             carry_out_lo, carry_out_mid, carry_out_hi,
             N, num_segs, d_escape);
