@@ -2,6 +2,7 @@
 
 #include "config.h"
 #include "crt_utils.h"
+#include <cuda_runtime.h>
 #include <vector>
 
 using namespace std;
@@ -29,7 +30,8 @@ void upload_residue_ptrs(const vector<TestDataTypeUint*> &c_dev);
 void crt_combine_gpu(
     uint64_t *d_C_hi,
     uint64_t *d_C_lo,
-    int N
+    int N,
+    cudaStream_t stream
 );
 
 #if defined(NATIVE_HOST_LIMBS)
@@ -38,5 +40,6 @@ void crt_combine_gpu_u160(
     uint64_t *d_C_lo,
     uint64_t *d_C_mid,
     uint32_t *d_C_hi,
-    int N);
+    int N,
+    cudaStream_t stream);
 #endif

@@ -283,13 +283,13 @@ void crt_combine_gpu_u160(
     uint64_t *d_C_lo,
     uint64_t *d_C_mid,
     uint32_t *d_C_hi,
-    int N)
+    int N,
+    cudaStream_t stream)
 {
     int threads = 256;
     int blocks  = (N + threads - 1) / threads;
-    crt_combine_kernel_u160<<<blocks, threads>>>(d_C_lo, d_C_mid, d_C_hi, N);
+    crt_combine_kernel_u160<<<blocks, threads, 0, stream>>>(d_C_lo, d_C_mid, d_C_hi, N);
     CUDA_CHECK_KERNEL();
-    cudaDeviceSynchronize();
 }
 
 #endif // NATIVE_HOST_LIMBS
@@ -298,11 +298,11 @@ void crt_combine_gpu_u160(
 void crt_combine_gpu(
     uint64_t *d_C_hi,   // pre-allocated device output
     uint64_t *d_C_lo,
-    int N
+    int N,
+    cudaStream_t stream
 ) {
     int threads = 256;
     int blocks  = (N + threads - 1) / threads;
-    crt_combine_kernel<<<blocks, threads>>>(d_C_hi, d_C_lo, N);
+    crt_combine_kernel<<<blocks, threads, 0, stream>>>(d_C_hi, d_C_lo, N);
     CUDA_CHECK_KERNEL();
-    cudaDeviceSynchronize();
 }

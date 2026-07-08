@@ -821,13 +821,13 @@ void execute_ntt_multiply(
 
     // ctx.c_dev[i] holds INTT results — pass directly to CRT, no host round-trip
 #if defined(NATIVE_HOST_LIMBS)
-    crt_combine_gpu_u160(ctx.d_C_lo, ctx.d_C_mid, ctx.d_C_hi32, ctx.N);
+    crt_combine_gpu_u160(ctx.d_C_lo, ctx.d_C_mid, ctx.d_C_hi32, ctx.N, ctx.stream_a);
 #else
-    crt_combine_gpu(ctx.d_C_hi, ctx.d_C_lo, ctx.N);
+    crt_combine_gpu(ctx.d_C_hi, ctx.d_C_lo, ctx.N, ctx.stream_a);
 #endif
 
     #if DEBUG && !defined(NATIVE_HOST_LIMBS)
-    cudaDeviceSynchronize();
+    cudaStreamSynchronize(ctx.stream_a);
     vector<uint64_t> chi(8), clo(8);
     CUDA_CHECK(cudaMemcpy(chi.data(), ctx.d_C_hi, 8*sizeof(uint64_t), cudaMemcpyDeviceToHost));
     CUDA_CHECK(cudaMemcpy(clo.data(), ctx.d_C_lo, 8*sizeof(uint64_t), cudaMemcpyDeviceToHost));
@@ -853,6 +853,7 @@ void execute_ntt_multiply(
 
 #if defined(NATIVE_HOST_LIMBS)
     if (crt_lo_out && crt_mid_out && crt_hi32_out) {
+        cudaStreamSynchronize(ctx.stream_a);
         crt_lo_out->resize(ctx.N);
         crt_mid_out->resize(ctx.N);
         crt_hi32_out->resize(ctx.N);
@@ -875,6 +876,7 @@ void execute_ntt_multiply(
     }
 #else
     if (crt_hi_out && crt_lo_out) {
+        cudaStreamSynchronize(ctx.stream_a);
         crt_hi_out->resize(ctx.N);
         crt_lo_out->resize(ctx.N);
         CUDA_CHECK(cudaMemcpy(crt_hi_out->data(), ctx.d_C_hi, ctx.N * sizeof(uint64_t),

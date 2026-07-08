@@ -132,7 +132,7 @@ vector<CRTResult> run_crt(
     cudaMalloc(&d_C_hi, N * sizeof(uint64_t));
     cudaMalloc(&d_C_lo, N * sizeof(uint64_t));
 
-    crt_combine_gpu(d_C_hi, d_C_lo, N);
+    crt_combine_gpu(d_C_hi, d_C_lo, N, 0);
 
     vector<uint64_t> h_hi(N), h_lo(N);
     cudaMemcpy(h_hi.data(), d_C_hi, N * sizeof(uint64_t), cudaMemcpyDeviceToHost);
@@ -357,7 +357,7 @@ vector<CRTResult160> run_crt_u160(
     cudaMalloc(&d_C_mid, N * sizeof(uint64_t));
     cudaMalloc(&d_C_hi, N * sizeof(uint32_t));
 
-    crt_combine_gpu_u160(d_C_lo, d_C_mid, d_C_hi, N);
+    crt_combine_gpu_u160(d_C_lo, d_C_mid, d_C_hi, N, 0);
 
     vector<uint64_t> h_lo(N), h_mid(N);
     vector<uint32_t> h_hi(N);
