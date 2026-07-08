@@ -387,7 +387,10 @@ static BenchRow benchmark_L(size_t L_arg, int warmup, int iters, uint64_t seed)
     return row;
 }
 
-static void write_csv(const string& path, const vector<BenchRow>& rows, bool append)
+// Append one row to the CSV (truncating first if append==false). Called after
+// each L so results survive a crash/abort at a larger size; closing the stream
+// per row flushes it to disk.
+static void write_csv_row(const string& path, const BenchRow& row, bool append)
 {
     const bool write_header = !append || !file_nonempty(path);
     ofstream csv(path, append ? ios::app : ios::trunc);
@@ -408,48 +411,46 @@ static void write_csv(const string& path, const vector<BenchRow>& rows, bool app
     }
     csv << fixed << setprecision(6);
 
-    for (const BenchRow& row : rows) {
-        csv << pipeline_name() << ","
-            << INPUT_LIMB_BITS << ","
-            << (row.L * INPUT_LIMB_BITS) << ","
-            << row.L_arg << ","
-            << row.L << ","
-            << row.N << ","
-            << row.logN << ","
-            << row.warmup << ","
-            << row.iters << ","
-            << row.execute_total.mean_ms << ","
-            << row.execute_total.stddev_ms << ","
-            << row.execute_total.min_ms << ","
-            << row.execute_total.max_ms << ","
-            << row.setup.pinned_ms << ","
+    csv << pipeline_name() << ","
+        << INPUT_LIMB_BITS << ","
+        << (row.L * INPUT_LIMB_BITS) << ","
+        << row.L_arg << ","
+        << row.L << ","
+        << row.N << ","
+        << row.logN << ","
+        << row.warmup << ","
+        << row.iters << ","
+        << row.execute_total.mean_ms << ","
+        << row.execute_total.stddev_ms << ","
+        << row.execute_total.min_ms << ","
+        << row.execute_total.max_ms << ","
+        << row.setup.pinned_ms << ","
             << row.setup.stage_ms << ","
-            << row.setup.precompute_ms << ","
-            << row.setup.upload_ms << ","
-            << row.setup.alloc_ctx_ms << ","
-            << row.setup.precompute.factors_ms << ","
-            << row.setup.precompute.params_ms << ","
-            << row.setup.precompute.twiddle_host_ms << ","
-            << row.setup.precompute.garner_host_ms << ","
-            << row.setup.upload.twiddle_upload_ms << ","
-            << row.setup.upload.mod_constants_ms << ","
-            << row.setup.upload.garner_upload_ms << ","
+        << row.setup.precompute_ms << ","
+        << row.setup.upload_ms << ","
+        << row.setup.alloc_ctx_ms << ","
+        << row.setup.precompute.factors_ms << ","
+        << row.setup.precompute.params_ms << ","
+        << row.setup.precompute.twiddle_host_ms << ","
+        << row.setup.precompute.garner_host_ms << ","
+        << row.setup.upload.twiddle_upload_ms << ","
+        << row.setup.upload.mod_constants_ms << ","
+        << row.setup.upload.garner_upload_ms << ","
             << row.teardown.unstage_ms << ","
-            << row.teardown.free_ctx_ms << ","
-            << row.teardown.free_pre_ms << ","
-            << row.teardown.free_pinned_ms << ","
-            << row.ingress_fwd.mean_ms << ","
-            << row.h2d_a.mean_ms << ","
-            << row.h2d.mean_ms << ","
-            << row.fwd_pad_ntt.mean_ms << ","
-            << row.fwd_pad_ntt_a.mean_ms << ","
-            << row.fwd_pad_ntt_b.mean_ms << ","
-            << row.pointwise_mul.mean_ms << ","
-            << row.intt.mean_ms << ","
-            << row.crt.mean_ms << ","
-            << row.carry.mean_ms << ","
-            << row.d2h.mean_ms << "\n";
-    }
+        << row.teardown.free_ctx_ms << ","
+        << row.teardown.free_pre_ms << ","
+        << row.teardown.free_pinned_ms << ","
+        << row.ingress_fwd.mean_ms << ","
+        << row.h2d_a.mean_ms << ","
+        << row.h2d.mean_ms << ","
+        << row.fwd_pad_ntt.mean_ms << ","
+        << row.fwd_pad_ntt_a.mean_ms << ","
+        << row.fwd_pad_ntt_b.mean_ms << ","
+        << row.pointwise_mul.mean_ms << ","
+        << row.intt.mean_ms << ","
+        << row.crt.mean_ms << ","
+        << row.carry.mean_ms << ","
+        << row.d2h.mean_ms << "\n";
 }
 
 static void print_row(const BenchRow& row)
@@ -574,8 +575,7 @@ int main(int argc, char* argv[])
 
     warmup_cuda_runtime();
 
-    vector<BenchRow> rows;
-    rows.reserve(L_args.size());
+    size_t rows_written = 0;
 
     uint64_t seed = 1234;
     for (size_t L_arg : L_args) {
@@ -591,13 +591,16 @@ int main(int argc, char* argv[])
         cout << "Benchmarking L_arg=" << L_arg << " (L=" << L << ") ... " << flush;
         BenchRow row = benchmark_L(L_arg, warmup, iters, seed);
         seed += 17;
-        rows.push_back(row);
         cout << "done\n";
         print_row(row);
+
+        // Flush each row to disk immediately so a crash at a larger L (e.g.
+        // out-of-memory abort) doesn't lose earlier results.
+        write_csv_row(csv_path, row, csv_append || rows_written > 0);
+        rows_written++;
     }
 
-    write_csv(csv_path, rows, csv_append);
     cout << string(72, '-') << "\n";
-    cout << "Wrote " << rows.size() << " rows to " << csv_path << "\n";
+    cout << "Wrote " << rows_written << " rows to " << csv_path << "\n";
     return 0;
 }
