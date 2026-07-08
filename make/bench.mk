@@ -29,6 +29,16 @@ $(BENCH_FULL_64BIT): $(BENCH_FULL_SRCS) | $(OBJ_DIR) $(GPU_NTT_LIB)
 		$^ -o $@ $(LIBS)
 
 # ================================================================
+# Pinned host memory benchmark (CUDA runtime only)
+# ================================================================
+
+PINNED_BENCH_SRC := bench/bench_pinned_memcpy.cpp
+BENCH_PINNED     := build/bench_pinned_memcpy
+
+$(BENCH_PINNED): $(PINNED_BENCH_SRC) | $(OBJ_DIR)
+	$(NVCC) $(NVCCFLAGS) $(INCLUDES) $< -o $@ -lcudart
+
+# ================================================================
 # GMP benchmark build (host-only, no CUDA)
 # ================================================================
 
@@ -55,10 +65,12 @@ bench_full: bench_full_32 bench_full_hybrid bench_full_64bit
 bench_gmp_32: $(BENCH_GMP_32)
 bench_gmp_64bit: $(BENCH_GMP_64BIT)
 bench_gmp: bench_gmp_32 bench_gmp_64bit
+bench_pinned_memcpy: $(BENCH_PINNED)
 
 # Deprecated aliases
 bench_full_64: bench_full_hybrid
 bench_full_64native: bench_full_64bit
 
 .PHONY: bench bench_full bench_full_32 bench_full_hybrid bench_full_64bit \
-	bench_full_64 bench_full_64native bench_gmp bench_gmp_32 bench_gmp_64bit
+	bench_full_64 bench_full_64native bench_gmp bench_gmp_32 bench_gmp_64bit \
+	bench_pinned_memcpy

@@ -305,7 +305,7 @@ static BenchRow benchmark_L(size_t L_arg, int warmup, int iters, uint64_t seed)
     setup.pinned_ms = time_host_ms([&] {
         cudaMallocHost(&a_pinned, L_A * sizeof(InputLimbType));
         cudaMallocHost(&b_pinned, L_B * sizeof(InputLimbType));
-        cudaMallocHost(&c_pinned, (N + 1) * sizeof(OutputLimbType));
+        cudaMallocHost(&c_pinned, N * sizeof(OutputLimbType));
     });
 
     setup.stage_ms = time_host_ms([&] {
@@ -345,11 +345,11 @@ static BenchRow benchmark_L(size_t L_arg, int warmup, int iters, uint64_t seed)
         stage_samples.push_back(timing);
     }
 
-    vector<OutputLimbType> C_out(N + 1, 0);
+    vector<OutputLimbType> C_out(N, 0);
 
     TeardownTiming teardown{};
     teardown.unstage_ms = time_host_ms([&] {
-        memcpy(C_out.data(), c_pinned, (N + 1) * sizeof(OutputLimbType));
+        memcpy(C_out.data(), c_pinned, N * sizeof(OutputLimbType));
     });
     teardown.free_ctx_ms = time_host_ms([&] {
         cleanup_ntt_context(ctx);
