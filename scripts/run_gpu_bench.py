@@ -2,6 +2,7 @@
 """Build and run the GPU full-multiply benchmark (32-bit, hybrid, and/or 64-bit)."""
 
 import argparse
+import signal
 import subprocess
 import sys
 from pathlib import Path
@@ -32,6 +33,29 @@ def run(cmd: list[str], *, cwd: Path = ROOT) -> None:
     subprocess.run(cmd, cwd=cwd, check=True)
 
 
+def run_bench(cmd: list[str], *, cwd: Path = ROOT) -> bool:
+    """Run a benchmark binary; return True on success.
+
+    Unlike run(), a failure (nonzero exit or death by signal, e.g. a CUDA
+    memory error) is reported but does not abort the whole script, so the
+    remaining pipelines still get benchmarked.
+    """
+    print("+", " ".join(str(c) for c in cmd))
+    rc = subprocess.run(cmd, cwd=cwd).returncode
+    if rc == 0:
+        return True
+    if rc < 0:
+        try:
+            desc = f"signal {signal.Signals(-rc).name}"
+        except ValueError:
+            desc = f"signal {-rc}"
+    else:
+        desc = f"exit code {rc}"
+    print(f"!!! benchmark failed ({desc}); continuing with remaining pipelines",
+          file=sys.stderr)
+    return False
+
+
 def build(bits: str) -> Path:
     bits = normalize(bits)
     if bits not in PIPELINES:
@@ -53,9 +77,9 @@ def main() -> None:
     parser.add_argument(
         "--limb-bits",
         choices=("32", "hybrid", "64bit", "64", "64native", "both", "all"),
-        default="32",
+        default="all",
         help=(
-            "Which pipeline to run (default: 32). "
+            "Which pipeline to run (default: all). "
             "'both'=32+hybrid, 'all'=32+hybrid+64bit. "
             "'64' and '64native' are deprecated aliases for hybrid and 64bit."
         ),
@@ -91,6 +115,7 @@ def main() -> None:
     if not csv_path.is_absolute():
         csv_path = ROOT / csv_path
 
+    failed: list[str] = []
     for i, bits in enumerate(bits_list):
         canonical = normalize(bits)
         if not args.no_build:
@@ -107,9 +132,13 @@ def main() -> None:
         cmd.extend(args.bench_args)
 
         print(f"\n=== {canonical} benchmark ===")
-        run(cmd)
+        if not run_bench(cmd):
+            failed.append(canonical)
 
     print(f"\nResults in {csv_path}")
+    if failed:
+        print(f"Failed pipelines: {', '.join(failed)}", file=sys.stderr)
+        sys.exit(1)
 
 
 if __name__ == "__main__":
