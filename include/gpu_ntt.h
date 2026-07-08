@@ -110,11 +110,14 @@ NTTPrecomputed precompute_ntt(size_t N, PrecomputeTiming* timing_out = nullptr);
 void upload_ntt_precomputed(NTTPrecomputed& pre, SetupUploadTiming* timing_out = nullptr);
 NTTContext allocate_ntt_context(const NTTPrecomputed &pre, size_t L_A, size_t L_B);
 
+// c_out_pinned must hold N+1 limbs of page-locked (cudaMallocHost) memory so
+// the final D2H copy takes the DMA fast path. May be nullptr only when the
+// CRT debug outputs below are used (early return before the carry/D2H stages).
 void execute_ntt_multiply(
 	NTTContext &ctx,
 	const InputLimbType* a_pinned,
 	const InputLimbType* b_pinned,
-	vector<OutputLimbType> &C_out,
+	OutputLimbType* c_out_pinned,
 	NTTTiming* timing_out = nullptr,
 	vector<uint64_t>* crt_hi_out = nullptr,
 	vector<uint64_t>* crt_lo_out = nullptr,

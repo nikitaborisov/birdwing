@@ -79,11 +79,13 @@ SEQUENTIAL_EXECUTE_COLUMNS = (
 )
 
 INFRA_LAYERS: tuple[tuple[str, str], ...] = (
-    ("setup_pinned_ms", "Setup: pinned"),
+    ("setup_pinned_ms", "Setup: pinned alloc"),
+    ("setup_stage_ms", "Setup: stage A/B"),
     ("upload_twiddle_ms", "Upload: twiddles"),
     ("upload_mod_constants_ms", "Upload: mod/n⁻¹"),
     ("upload_garner_ms", "Upload: garner"),
     ("setup_alloc_ms", "Setup: alloc"),
+    ("teardown_unstage_ms", "Teardown: unstage C"),
     ("teardown_free_ctx_ms", "Teardown: free ctx"),
     ("teardown_free_pre_ms", "Teardown: free pre"),
     ("teardown_free_pinned_ms", "Teardown: free pinned"),
