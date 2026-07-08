@@ -228,9 +228,10 @@ static void run_case(size_t L, uint64_t seed) {
     printf("  L=%zu N=%zu precompute+alloc: %.1f ms\n", L, N, ms_since(t_pre));
 
     vector<uint64_t> gpu_hi, gpu_lo;
-    vector<OutputLimbType> dummy_out;
     auto t_gpu = Clock::now();
-    execute_ntt_multiply(ctx, a_pinned, b_pinned, dummy_out,
+    // CRT debug outputs requested: early return before carry/D2H, no pinned
+    // output buffer needed.
+    execute_ntt_multiply(ctx, a_pinned, b_pinned, nullptr,
                          nullptr, &gpu_hi, &gpu_lo);
     printf("  L=%zu GPU through CRT: %.1f ms\n", L, ms_since(t_gpu));
 
@@ -472,9 +473,10 @@ static void run_case_native(size_t L, uint64_t seed, bool narrow) {
 
     vector<uint64_t> gpu_lo, gpu_mid;
     vector<uint32_t> gpu_hi;
-    vector<OutputLimbType> dummy_out;
     auto t_gpu = Clock::now();
-    execute_ntt_multiply(ctx, a_pinned, b_pinned, dummy_out,
+    // CRT debug outputs requested: early return before carry/D2H, no pinned
+    // output buffer needed.
+    execute_ntt_multiply(ctx, a_pinned, b_pinned, nullptr,
                          nullptr, nullptr, &gpu_lo, &gpu_mid, &gpu_hi);
     printf("  L=%zu GPU through CRT: %.1f ms\n", L, ms_since(t_gpu));
 

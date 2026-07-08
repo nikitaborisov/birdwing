@@ -443,7 +443,7 @@ void execute_ntt_multiply(
     NTTContext &ctx,
     const InputLimbType* a_pinned,
     const InputLimbType* b_pinned,
-    vector<OutputLimbType> &C_out,
+    OutputLimbType* c_out_pinned,
     NTTTiming* timing_out,
     vector<uint64_t>* crt_hi_out,
     vector<uint64_t>* crt_lo_out,
@@ -929,7 +929,8 @@ void execute_ntt_multiply(
     if (prof.on)
         prof.d2h_timer->tic(0);
 
-    cudaMemcpy(C_out.data(), ctx.d_out,
+    // Pinned destination: full-bandwidth DMA, no driver staging copy.
+    cudaMemcpy(c_out_pinned, ctx.d_out,
             (ctx.N + 1) * sizeof(OutputLimbType), cudaMemcpyDeviceToHost);
 
     if (prof.on)

@@ -29,7 +29,8 @@ a GPU.
 
 - `upload_ntt_precomputed` — H2D twiddles, modulus / n⁻¹, Garner constants
 - `allocate_ntt_context` — mutable operand / CRT / carry buffers
-- pinned host buffers for `A` and `B`
+- pinned host buffer allocation for `A`, `B`, and the output `C`
+- staging copy of operands from paged memory into pinned `A` / `B`
 
 ### Same-size batches
 
@@ -56,23 +57,26 @@ flowchart TD
 
     subgraph setup_b [setup]
         U[upload_ntt_precomputed]
-        S[allocate_ntt_context + pinned A/B]
-        U --> S
+        S[allocate_ntt_context + pinned A/B/C alloc]
+        G[stage A/B: paged -> pinned]
+        U --> S --> G
     end
 
     subgraph mult_b [multiply]
-        M[execute_ntt_multiply]
+        M[execute_ntt_multiply — D2H lands in pinned C]
     end
 
     subgraph tear_b [teardown]
+        X[unstage C: pinned -> paged]
         T[cleanup context / GPU pre / pinned]
+        X --> T
     end
 
     I --> P
     P --> U
-    S --> M
+    G --> M
     M --> M
-    M --> T
+    M --> X
 ```
 
 ## init
@@ -114,18 +118,27 @@ Must run before `allocate_ntt_context`. Idempotent if already uploaded.
 **Context API:** `allocate_ntt_context(pre, L_A, L_B)` — mutable GPU buffers
 (requires `pre.gpu_uploaded`).
 
-**Pinned operands:** `cudaMallocHost` + `memcpy` for `A` / `B`.
+**Pinned buffers:** `cudaMallocHost` reserves page-locked host buffers for the
+inputs `A` / `B` and the output `C`. The output buffer is what
+`execute_ntt_multiply` copies into on D2H, so the transfer takes the DMA fast
+path instead of the driver's pageable staging path.
 
-**Benchmark columns:** `setup_upload_ms`, `setup_alloc_ms`, `setup_pinned_ms`,
-`upload_*` breakdown.
+**Staging:** operands are `memcpy`'d from paged memory into pinned `A` / `B`
+once per batch, timed separately from allocation (`setup_stage_ms`).
+
+**Benchmark columns:** `setup_upload_ms`, `setup_alloc_ms`, `setup_pinned_ms`
+(allocation only), `setup_stage_ms` (paged → pinned copy), `upload_*`
+breakdown.
 
 ## teardown
 
+- unstage `C` — `memcpy` result from pinned buffer to paged memory, timed
+  separately (`teardown_unstage_ms`)
 - `cleanup_ntt_context(ctx)` — frees mutable GPU buffers
 - `cleanup_ntt_precomputed(pre)` — frees **GPU** twiddle / constant allocations;
   **host** tables remain so `upload_ntt_precomputed` can run again without full
   precompute
-- `cudaFreeHost` — pinned A/B
+- `cudaFreeHost` — pinned A/B/C
 
 Defer **teardown** until the size batch is finished. You may free context only
 and keep host precompute for another upload cycle at the same `N`.
@@ -150,16 +163,16 @@ python scripts/plot_bench.py gpu_multiply_bench.csv
 
 Plots use **operand bits** (`L × host_limb_bits`) on the x-axis by default so 32-bit, hybrid, and 64-bit pipelines compare at equal input size. Use `--x L` for raw limb count.
 
-Per `L`: single-shot **precompute**, **upload**, **setup** alloc/pinned,
+Per `L`: single-shot **precompute**, **upload**, **setup** alloc/pinned/stage,
 averaged **multiply**, single-shot **teardown**.
 
 | Columns | Bucket |
 |---------|--------|
 | `setup_precompute_ms`, `pre_*` | precompute (host) |
 | `setup_upload_ms`, `upload_*` | setup (GPU upload) |
-| `setup_alloc_ms`, `setup_pinned_ms` | setup |
+| `setup_alloc_ms`, `setup_pinned_ms`, `setup_stage_ms` | setup |
 | `mean_ms`, stage columns | multiply |
-| `teardown_*` | teardown |
+| `teardown_unstage_ms`, `teardown_free_*` | teardown |
 
 ## Code map
 
@@ -167,9 +180,9 @@ averaged **multiply**, single-shot **teardown**.
 |--------|-----|--------|
 | init | (implicit) | — |
 | precompute | `precompute_ntt` | `PrecomputeTiming` |
-| setup | `upload_ntt_precomputed`, `allocate_ntt_context`, `cudaMallocHost` | `SetupUploadTiming`, `setup_*` |
-| teardown | `cleanup_ntt_context`, `cleanup_ntt_precomputed`, `cudaFreeHost` | `teardown_*` |
-| multiply | `execute_ntt_multiply` | `NTTTiming` |
+| setup | `upload_ntt_precomputed`, `allocate_ntt_context`, `cudaMallocHost`, stage `memcpy` | `SetupUploadTiming`, `setup_*` |
+| teardown | unstage `memcpy`, `cleanup_ntt_context`, `cleanup_ntt_precomputed`, `cudaFreeHost` | `teardown_*` |
+| multiply | `execute_ntt_multiply` (D2H into pinned `C`) | `NTTTiming` |
 | Legacy | `host_multiply_merge` | `duration` |
 
 Correct sequence:

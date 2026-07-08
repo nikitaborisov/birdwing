@@ -37,12 +37,12 @@ void host_multiply_merge(const vector<uint32_t> &A, const vector<uint32_t> &B, v
 
     uint32_t* a_pinned;
     uint32_t* b_pinned;
+    OutputLimbType* c_pinned;
     cudaMallocHost(&a_pinned, L_A * sizeof(uint32_t));
     cudaMallocHost(&b_pinned, L_B * sizeof(uint32_t));
+    cudaMallocHost(&c_pinned, (N + 1) * sizeof(OutputLimbType));
     memcpy(a_pinned, A.data(), L_A * sizeof(uint32_t));
     memcpy(b_pinned, B.data(), L_B * sizeof(uint32_t));
-
-    vector<OutputLimbType> C_out(N + 1, 0);
 
     C.resize(L_C + 1, 0);
 
@@ -51,11 +51,11 @@ void host_multiply_merge(const vector<uint32_t> &A, const vector<uint32_t> &B, v
     auto t0 = chrono::high_resolution_clock::now();
     upload_ntt_precomputed(pre);
     NTTContext ctx = allocate_ntt_context(pre, L_A, L_B);
-    execute_ntt_multiply(ctx, a_pinned, b_pinned, C_out);
+    execute_ntt_multiply(ctx, a_pinned, b_pinned, c_pinned);
     auto t1 = chrono::high_resolution_clock::now();
 
     for (size_t i = 0; i <= L_C; i++)
-        C[i] = C_out[i];
+        C[i] = c_pinned[i];
 
     cleanup_ntt_context(ctx);
     auto t2 = chrono::high_resolution_clock::now();
@@ -63,6 +63,7 @@ void host_multiply_merge(const vector<uint32_t> &A, const vector<uint32_t> &B, v
     cleanup_ntt_precomputed(pre);
     cudaFreeHost(a_pinned);
     cudaFreeHost(b_pinned);
+    cudaFreeHost(c_pinned);
 
     // print t1-t0, t3-t2
     // cout << "[Host] NTT multiply time: " << chrono::duration<double, milli>(t1 - t0).count() << " ms\n";
@@ -104,12 +105,13 @@ void host_multiply_merge_native(const vector<uint64_t> &A, const vector<uint64_t
 
     uint64_t* a_pinned;
     uint64_t* b_pinned;
+    uint64_t* c_pinned;
     cudaMallocHost(&a_pinned, L_A * sizeof(uint64_t));
     cudaMallocHost(&b_pinned, L_B * sizeof(uint64_t));
+    cudaMallocHost(&c_pinned, (N + 1) * sizeof(uint64_t));
     memcpy(a_pinned, A.data(), L_A * sizeof(uint64_t));
     memcpy(b_pinned, B.data(), L_B * sizeof(uint64_t));
 
-    vector<uint64_t> C_out(N + 1, 0);
     C.resize(L_C + 1, 0);
 
     NTTPrecomputed pre = precompute_ntt(N);
@@ -117,17 +119,18 @@ void host_multiply_merge_native(const vector<uint64_t> &A, const vector<uint64_t
     auto t0 = chrono::high_resolution_clock::now();
     upload_ntt_precomputed(pre);
     NTTContext ctx = allocate_ntt_context(pre, L_A, L_B);
-    execute_ntt_multiply(ctx, a_pinned, b_pinned, C_out);
+    execute_ntt_multiply(ctx, a_pinned, b_pinned, c_pinned);
     auto t1 = chrono::high_resolution_clock::now();
 
     for (size_t i = 0; i <= L_C; i++)
-        C[i] = C_out[i];
+        C[i] = c_pinned[i];
 
     cleanup_ntt_context(ctx);
     auto t2 = chrono::high_resolution_clock::now();
     cleanup_ntt_precomputed(pre);
     cudaFreeHost(a_pinned);
     cudaFreeHost(b_pinned);
+    cudaFreeHost(c_pinned);
 
     (void)t1;
     duration = t2 - t0;

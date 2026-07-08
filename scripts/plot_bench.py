@@ -51,7 +51,6 @@ def series_label(row: dict) -> str:
     return f"{row['limb_bits']}-bit"
 
 EXECUTE_STACK_LAYERS: tuple[tuple[str, str], ...] = (
-    ("host_staging_mean_ms", "Host -> pinned"),
     ("ingress_fwd_mean_ms", "H2D + fwd pad+NTT"),
     ("mul_mean_ms", "Pointwise mul"),
     ("intt_mean_ms", "INTT"),
@@ -77,11 +76,13 @@ SEQUENTIAL_EXECUTE_COLUMNS = (
 )
 
 INFRA_LAYERS: tuple[tuple[str, str], ...] = (
-    ("setup_pinned_ms", "Setup: pinned"),
+    ("setup_pinned_ms", "Setup: pinned alloc"),
+    ("setup_stage_ms", "Setup: stage A/B"),
     ("upload_twiddle_ms", "Upload: twiddles"),
     ("upload_mod_constants_ms", "Upload: mod/n⁻¹"),
     ("upload_garner_ms", "Upload: garner"),
     ("setup_alloc_ms", "Setup: alloc"),
+    ("teardown_unstage_ms", "Teardown: unstage C"),
     ("teardown_free_ctx_ms", "Teardown: free ctx"),
     ("teardown_free_pre_ms", "Teardown: free pre"),
     ("teardown_free_pinned_ms", "Teardown: free pinned"),
@@ -112,9 +113,8 @@ def derive_ingress_fwd(row: dict) -> float:
     """Wall-clock ingress phase; residual from total when column is absent."""
     if "ingress_fwd_mean_ms" in row:
         return float(row["ingress_fwd_mean_ms"])
-    host_staging = float(row.get("host_staging_mean_ms", 0.0))
     sequential = sum(float(row[col]) for col in SEQUENTIAL_EXECUTE_COLUMNS)
-    return max(float(row["mean_ms"]) - host_staging - sequential, 0.0)
+    return max(float(row["mean_ms"]) - sequential, 0.0)
 
 
 def enrich_breakdown_row(entry: dict) -> None:
