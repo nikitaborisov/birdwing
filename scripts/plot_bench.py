@@ -23,6 +23,10 @@ PIPELINE_LABELS = {
     "64bit": "64-bit",
 }
 
+# Grouped histogram bar order (left → right at each x).
+SERIES_ORDER = ("64-bit", "32-bit", "hybrid")
+BASELINE_SERIES_LABEL = "64-bit"
+
 
 def resolve_host_limb_bits(row: dict) -> int:
     if "host_limb_bits" in row:
@@ -214,6 +218,36 @@ def group_rows(rows: list[dict], x_key: str) -> dict[str, list[dict]]:
     for label in groups:
         groups[label].sort(key=lambda r: r[x_key])
     return groups
+
+
+def ordered_group_labels(groups: dict[str, list[dict]]) -> list[str]:
+    labels: list[str] = []
+    for label in SERIES_ORDER:
+        if label in groups:
+            labels.append(label)
+    for label in sorted(groups):
+        if label not in labels:
+            labels.append(label)
+    return labels
+
+
+def row_layer_total(row: dict, layers: tuple[tuple[str, str], ...]) -> float:
+    return sum(max(float(row.get(col, 0.0)), 0.0) for col, _ in layers)
+
+
+def baseline_totals_by_x(
+    groups: dict[str, list[dict]],
+    x_key: str,
+    layers: tuple[tuple[str, str], ...],
+    *,
+    ref_label: str = BASELINE_SERIES_LABEL,
+) -> dict[float, float]:
+    if ref_label not in groups:
+        return {}
+    return {
+        float(row[x_key]): row_layer_total(row, layers)
+        for row in groups[ref_label]
+    }
 
 
 def error_intervals(series: list[dict], mode: str) -> tuple[np.ndarray, np.ndarray]:
@@ -468,17 +502,19 @@ def draw_stacked_bars(
     ylabel: str,
     show_xlabels: bool = True,
 ) -> tuple[list, list[str], list[str]]:
-    n_groups = len(groups)
-    group_labels = sorted(groups)
+    group_labels = ordered_group_labels(groups)
+    n_groups = len(group_labels)
     all_x_values: list[float] = []
     for series in groups.values():
         all_x_values.extend(r[x_key] for r in series)
     unique_x = sorted({float(v) for v in all_x_values})
     x_to_idx = {v: i for i, v in enumerate(unique_x)}
+    baselines = baseline_totals_by_x(groups, x_key, layers)
 
     bar_width = min(0.75 / max(n_groups, 1), 0.35)
     handles: list = []
     labels: list[str] = []
+    ymax_by_x: dict[float, float] = defaultdict(float)
 
     for g_idx, group_label in enumerate(group_labels):
         series = groups[group_label]
@@ -490,7 +526,9 @@ def draw_stacked_bars(
         bottoms = np.zeros(len(series), dtype=float)
         for layer_idx, (col, label) in enumerate(layers):
             heights = np.array([
-                max(float(r.get(col, 0.0)), 0.0) for r in series
+                max(float(r.get(col, 0.0)), 0.0)
+                / max(baselines.get(float(r[x_key]), 1.0), np.finfo(float).tiny)
+                for r in series
             ])
             bars = ax.bar(
                 x_pos,
@@ -507,6 +545,9 @@ def draw_stacked_bars(
                 labels.append(label)
             bottoms += heights
 
+        for x_val, total_h in zip(x_vals, bottoms):
+            ymax_by_x[x_val] = max(ymax_by_x[x_val], float(total_h))
+
     tick_positions = np.arange(len(unique_x))
     ax.set_xticks(tick_positions)
     if show_xlabels:
@@ -514,7 +555,27 @@ def draw_stacked_bars(
     else:
         ax.set_xticklabels([])
         ax.tick_params(axis="x", length=0)
-    ax.set_ylabel(ylabel)
+
+    if baselines:
+        base_name = ylabel.removesuffix(" (ms)")
+        ax.set_ylabel(f"{base_name} (× {BASELINE_SERIES_LABEL})")
+        for x_idx, x_val in enumerate(unique_x):
+            total_ms = baselines.get(x_val)
+            if total_ms is None:
+                continue
+            ymax = ymax_by_x.get(x_val, 1.0)
+            ax.text(
+                x_idx,
+                ymax + 0.02,
+                f"{total_ms:.2f}",
+                ha="center",
+                va="bottom",
+                fontsize=7,
+                color="0.25",
+            )
+    else:
+        ax.set_ylabel(ylabel)
+
     ax.grid(True, axis="y", linestyle="--", alpha=0.35)
     return handles, labels, group_labels
 
